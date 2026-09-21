@@ -1,0 +1,18 @@
+# Install: copy agent/ to /opt/mailhost/agent, put AGENT_SECRET (openssl rand -hex 32) in /etc/mailhost/agent.env,
+# then: systemctl enable --now mailhost-agent
+[Unit]
+Description=Hosting panel host agent
+After=network.target docker.service
+
+[Service]
+EnvironmentFile=/etc/mailhost/agent.env
+ExecStart=/usr/bin/node /opt/mailhost/agent/agent.mjs
+Restart=always
+User=root
+# Privileged by design; keep the surface small: only whitelisted methods in agent.mjs are reachable.
+NoNewPrivileges=yes
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
