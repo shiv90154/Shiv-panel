@@ -1,5 +1,9 @@
 {
 	email {$ACME_EMAIL}
+	# Admin API is reachable only by the host agent (published on 127.0.0.1 in docker-compose.yml) to reload site routes.
+	admin 0.0.0.0:2019 {
+		origins 127.0.0.1:2019
+	}
 	# Certificates for autoconfig.<domain> / autodiscover.<domain> are issued on demand,
 	# but only for domains that exist in the database.
 	on_demand_tls {
@@ -20,3 +24,6 @@ https:// {
 	}
 	reverse_proxy web:3000
 }
+
+# One generated file per hosted site (written by the host agent, see agent/sites.mjs).
+import /etc/caddy/sites/*.caddy

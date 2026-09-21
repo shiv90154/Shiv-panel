@@ -82,13 +82,17 @@ services:
       VMAIL_DIR: /var/vmail
       DKIM_DIR: /var/lib/dkim
       MAIL_LOG_DIR: /var/log/mail
+      AGENT_URL: ${AGENT_URL:-}
+      AGENT_SECRET: ${AGENT_SECRET:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway" # reach the host agent (AGENT_URL=http://host.docker.internal:7701)
     volumes:
       - vmail:/var/vmail
       - dkim:/var/lib/dkim
       - maillog:/var/log/mail
 
   caddy:
-    image: caddy:2-alpine
+    image: ${CADDY_IMAGE:-caddy:2-alpine} # set to mailhost-caddy-waf after `docker build -t mailhost-caddy-waf ./caddy` to enable the per-site WAF
     <<: *restart
     depends_on: [web]
     environment:
@@ -97,8 +101,10 @@ services:
     ports:
       - "80:80"
       - "443:443"
+      - "127.0.0.1:2019:2019" # Caddy admin API: host agent only (never expose publicly)
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${CADDY_SITES_DIR:-/srv/caddy-sites}:/etc/caddy/sites:ro # per-site snippets written by the agent
       - caddy_data:/data
       - caddy_config:/config
 
