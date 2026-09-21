@@ -6,6 +6,7 @@ import { config } from "@/lib/config";
 import { generateDkimKeyPair, syncDkimFiles } from "@/lib/dkim";
 import { checkDomainDns, isCoreDnsReady } from "@/lib/dns";
 import { hashMailboxPassword } from "@/lib/password";
+import { assertWithinPackage } from "@/lib/tenancy";
 
 export const domainNameSchema = z
   .string()
@@ -24,13 +25,14 @@ export const localPartSchema = z
 
 export const passwordSchema = z.string().min(10, "Password must be at least 10 characters").max(200);
 
-export async function createDomain(rawName: string, opts: { defaultQuotaMb?: number } = {}) {
+export async function createDomain(rawName: string, opts: { accountId: string; defaultQuotaMb?: number }) {
   const name = domainNameSchema.parse(rawName);
   if (name === config.mailHostname) throw new Error("This is the server hostname; use a different domain");
   if (await prisma.domain.findUnique({ where: { name } })) throw new Error(`${name} already exists`);
+  await assertWithinPackage(opts.accountId, "domains");
   const { publicKey, privateKey } = generateDkimKeyPair();
   const domain = await prisma.domain.create({
-    data: { name, dkimPublicKey: publicKey, dkimPrivateKey: privateKey, defaultQuotaMb: opts.defaultQuotaMb ?? 1024 },
+    data: { accountId: opts.accountId, name, dkimPublicKey: publicKey, dkimPrivateKey: privateKey, defaultQuotaMb: opts.defaultQuotaMb ?? 1024 },
   });
   await syncDkimFiles();
   return domain;
@@ -62,12 +64,13 @@ export async function createMailbox(domainId: string, input: { localPart: string
   const domain = await prisma.domain.findUniqueOrThrow({ where: { id: domainId }, include: { _count: { select: { mailboxes: true } } } });
   const localPart = localPartSchema.parse(input.localPart);
   const password = passwordSchema.parse(input.password);
+  await assertWithinPackage(domain.accountId, "mailboxes");
   if (domain.maxMailboxes > 0 && domain._count.mailboxes >= domain.maxMailboxes) throw new Error(`Mailbox limit (${domain.maxMailboxes}) reached for ${domain.name}`);
   const email = `${localPart}@${domain.name}`;
   if (await prisma.alias.findUnique({ where: { source: email } })) throw new Error(`${email} is already used as an alias`);
   return prisma.mailbox.create({
     data: {
-      domainId, localPart, email,
+      domainId, accountId: domain.accountId, localPart, email,
       displayName: input.displayName?.trim() || null,
       passwordHash: await hashMailboxPassword(password),
       quotaMb: input.quotaMb ?? domain.defaultQuotaMb,
@@ -92,7 +95,7 @@ export async function createAlias(domainId: string, sourceLocal: string, destina
   for (const dest of destinations) z.string().email().parse(dest);
   if (destinations.includes(source)) throw new Error("An alias cannot point to itself");
   if (await prisma.mailbox.findUnique({ where: { email: source } })) throw new Error(`${source} is already a mailbox`);
-  return prisma.alias.create({ data: { domainId, source, destinations } });
+  return prisma.alias.create({ data: { domainId, accountId: domain.accountId, source, destinations } });
 }
 
 // ---------- filesystem ----------

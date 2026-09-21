@@ -2,11 +2,14 @@ import { Badge, Flash, bytes } from "@/components/ui";
 import { getServerStatus } from "@/server/status";
 import { checkServerDns } from "@/lib/dns";
 import { config } from "@/lib/config";
+import { requireRole } from "@/lib/session";
+import { getAgentStatus } from "@/server/agent";
 import { resyncDkim } from "../../actions";
 
 export default async function ServerStatus({ searchParams }: { searchParams: Promise<{ ok?: string; error?: string }> }) {
+  await requireRole("admin");
   const sp = await searchParams;
-  const [st, dns] = await Promise.all([getServerStatus(), checkServerDns()]);
+  const [st, dns, agent] = await Promise.all([getServerStatus(), checkServerDns(), getAgentStatus()]);
   const usedPct = st.disk ? Math.round(((st.disk.total - st.disk.free) / st.disk.total) * 100) : 0;
   return (
     <>
@@ -31,6 +34,14 @@ export default async function ServerStatus({ searchParams }: { searchParams: Pro
           <tr><td>Reverse DNS (PTR) for {dns.ipv4 || "server IP"}</td><td className="mono">{dns.ptr.join(", ") || "none"}</td><td><Badge kind={dns.ptrOk ? "ok" : "bad"}>{dns.ptrOk ? "OK" : `must be ${dns.hostname}`}</Badge></td></tr>
         </tbody></table>
         <p className="muted">Set the PTR record in your VPS provider&apos;s control panel. Gmail and Outlook reject or spam-folder mail without matching PTR. Port 25 outbound must also be open.</p>
+      </div>
+      <div className="card">
+        <h2>Host agent</h2>
+        {!agent.configured && <p className="muted">Not configured. The agent runs privileged tasks (sites, databases, files, backups) outside the web container; set <span className="mono">AGENT_URL</span> and <span className="mono">AGENT_SECRET</span> once it is installed (see <span className="mono">agent/</span>).</p>}
+        {agent.configured && !agent.up && <p><Badge kind="bad">unreachable</Badge> <span className="muted">{agent.error}</span></p>}
+        {agent.configured && agent.up && (
+          <p><Badge kind="ok">connected</Badge> <span className="muted">v{agent.version} · {agent.info.hostname} · {agent.info.platform} · up {Math.round(agent.info.uptimeSec / 3600)} h · disk {bytes(agent.info.diskFree)} free</span></p>
+        )}
       </div>
       <div className="card">
         <h2>Maintenance</h2>

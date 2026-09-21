@@ -1,25 +1,27 @@
 import { prisma } from "@/lib/db";
-import { Badge, Flash, UsageBar } from "@/components/ui";
+import { Badge, DataTable, Flash, SectionCard, UsageBar } from "@/components/ui";
 import { ConfirmButton } from "@/components/client";
+import { requireSession } from "@/lib/session";
+import { scopeFor } from "@/lib/tenancy";
 import { addMailbox, editMailbox, removeMailbox } from "../../actions";
 
 export default async function Mailboxes({ searchParams }: { searchParams: Promise<{ ok?: string; error?: string; domain?: string; q?: string }> }) {
-  const sp = await searchParams;
-  const back = `/admin/mailboxes${sp.domain ? `?domain=${sp.domain}` : ""}`;
+  const [s, sp] = await Promise.all([requireSession(), searchParams]);
+  const scope = await scopeFor(s);
+  const back = `${s.base}/mailboxes${sp.domain ? `?domain=${sp.domain}` : ""}`;
   const [domains, boxes] = await Promise.all([
-    prisma.domain.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true, defaultQuotaMb: true } }),
+    prisma.domain.findMany({ where: scope, orderBy: { name: "asc" }, select: { id: true, name: true, defaultQuotaMb: true } }),
     prisma.mailbox.findMany({
-      where: { ...(sp.domain && { domainId: sp.domain }), ...(sp.q && { email: { contains: sp.q.toLowerCase() } }) },
+      where: { ...scope, ...(sp.domain && { domainId: sp.domain }), ...(sp.q && { email: { contains: sp.q.toLowerCase() } }) },
       orderBy: { email: "asc" }, take: 500,
     }),
   ]);
   return (
     <>
-      <h1>Mailboxes</h1>
+      <h1>Email accounts</h1>
       <p className="sub">Each mailbox works with IMAP/SMTP clients and webmail.</p>
       <Flash ok={sp.ok} error={sp.error} />
-      <div className="card">
-        <h2>Create mailbox</h2>
+      <SectionCard title="Create mailbox">
         <form action={addMailbox.bind(null, back)} className="row">
           <div><label>Address</label><input name="localPart" placeholder="john" required /></div>
           <div><label>Domain</label><select name="domainId" defaultValue={sp.domain}>{domains.map((d) => <option key={d.id} value={d.id}>@{d.name}</option>)}</select></div>
@@ -28,19 +30,21 @@ export default async function Mailboxes({ searchParams }: { searchParams: Promis
           <div><label>Quota MB (blank = domain default)</label><input name="quota" type="number" min={0} /></div>
           <div className="auto"><button className="primary" disabled={!domains.length}>Create</button></div>
         </form>
-      </div>
-      <div className="card">
+      </SectionCard>
+      <SectionCard>
         <form className="row" style={{ marginBottom: 12 }}>
           <div><select name="domain" defaultValue={sp.domain ?? ""}><option value="">All domains</option>{domains.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></div>
           <div><input name="q" placeholder="Search address" defaultValue={sp.q} /></div>
           <div className="auto"><button>Filter</button></div>
         </form>
-        <table>
-          <thead><tr><th>Mailbox</th><th>Status</th><th>Storage</th><th>Msgs</th><th>Last login</th><th></th></tr></thead>
-          <tbody>
-            {boxes.map((m) => (
-              <tr key={m.id}>
-                <td><b>{m.email}</b><div className="muted">{m.displayName}</div>
+        <DataTable
+          rows={boxes} rowKey={(m) => m.id} empty="No mailboxes."
+          columns={[
+            {
+              header: "Mailbox",
+              render: (m) => (
+                <>
+                  <b>{m.email}</b><div className="muted">{m.displayName}</div>
                   <details><summary>Edit</summary>
                     <form action={editMailbox.bind(null, m.id, back)} className="row" style={{ marginTop: 8 }}>
                       <div><label>Display name</label><input name="displayName" defaultValue={m.displayName ?? ""} /></div>
@@ -50,22 +54,17 @@ export default async function Mailboxes({ searchParams }: { searchParams: Promis
                       <div className="auto"><button className="primary sm">Save</button></div>
                     </form>
                   </details>
-                </td>
-                <td>{m.active ? <Badge kind="ok">active</Badge> : <Badge kind="off">disabled</Badge>}</td>
-                <td style={{ minWidth: 150 }}><UsageBar used={m.usedBytes} quotaMb={m.quotaMb} /></td>
-                <td>{m.messageCount}</td>
-                <td className="muted">{m.lastLoginAt?.toLocaleDateString() ?? "never"}</td>
-                <td>
-                  <form action={removeMailbox.bind(null, m.id, back)}>
-                    <ConfirmButton message={`Delete ${m.email} and all of its stored mail?`}>Delete</ConfirmButton>
-                  </form>
-                </td>
-              </tr>
-            ))}
-            {!boxes.length && <tr><td colSpan={6} className="muted">No mailboxes.</td></tr>}
-          </tbody>
-        </table>
-      </div>
+                </>
+              ),
+            },
+            { header: "Status", render: (m) => (m.active ? <Badge kind="ok">active</Badge> : <Badge kind="off">disabled</Badge>) },
+            { header: "Storage", className: "w150", render: (m) => <div style={{ minWidth: 150 }}><UsageBar used={m.usedBytes} quotaMb={m.quotaMb} /></div> },
+            { header: "Msgs", render: (m) => m.messageCount },
+            { header: "Last login", render: (m) => <span className="muted">{m.lastLoginAt?.toLocaleDateString() ?? "never"}</span> },
+            { header: "", render: (m) => <form action={removeMailbox.bind(null, m.id, back)}><ConfirmButton message={`Delete ${m.email} and all of its stored mail?`}>Delete</ConfirmButton></form> },
+          ]}
+        />
+      </SectionCard>
     </>
   );
 }

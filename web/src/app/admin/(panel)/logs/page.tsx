@@ -1,10 +1,12 @@
 import Link from "next/link";
 import { prisma } from "@/lib/db";
 import { Badge } from "@/components/ui";
+import { requireRole } from "@/lib/session";
 
 const PAGE = 100;
 
 export default async function Logs({ searchParams }: { searchParams: Promise<{ status?: string; q?: string; page?: string }> }) {
+  await requireRole("admin"); // mail logs are server-wide, not tenant-scoped
   const sp = await searchParams;
   const page = Math.max(1, Number(sp.page) || 1);
   const where = {

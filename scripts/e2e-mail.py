@@ -14,10 +14,11 @@ const { PrismaClient } = require("@prisma/client"); const bcrypt = require("bcry
 (async () => { const p = new PrismaClient();
   if (await p.domain.findUnique({ where: { name: "example.test" } })) return p.$disconnect();
   const k = crypto.generateKeyPairSync("rsa", { modulusLength: 2048, publicKeyEncoding: { type: "spki", format: "der" }, privateKeyEncoding: { type: "pkcs8", format: "pem" } });
-  const d = await p.domain.create({ data: { name: "example.test", dkimPublicKey: k.publicKey.toString("base64"), dkimPrivateKey: k.privateKey } });
+  const owner = await p.account.findFirstOrThrow({ where: { role: "admin" }, orderBy: { createdAt: "asc" } }); // every resource belongs to an account
+  const d = await p.domain.create({ data: { accountId: owner.id, name: "example.test", dkimPublicKey: k.publicKey.toString("base64"), dkimPrivateKey: k.privateKey } });
   const h = "{BLF-CRYPT}" + (await bcrypt.hash("password1234", 10)).replace(/^\$2[ab]\$/, "$2y$");
-  for (const n of ["alice", "bob"]) await p.mailbox.create({ data: { domainId: d.id, localPart: n, email: n + "@example.test", passwordHash: h, quotaMb: 100 } });
-  await p.alias.create({ data: { domainId: d.id, source: "support@example.test", destinations: ["bob@example.test"] } });
+  for (const n of ["alice", "bob"]) await p.mailbox.create({ data: { domainId: d.id, accountId: owner.id, localPart: n, email: n + "@example.test", passwordHash: h, quotaMb: 100 } });
+  await p.alias.create({ data: { domainId: d.id, accountId: owner.id, source: "support@example.test", destinations: ["bob@example.test"] } });
   await p.$disconnect(); })();
 '''
 def dc(*a, **k): return subprocess.run(["scripts/dc", *a], capture_output=True, text=True, **k)
@@ -34,7 +35,7 @@ m.sendmail("alice@example.test", ["bob@example.test", "support@example.test"], f
 check("authenticated send accepted", True)
 try:
     m = smtp(); m.login("alice@example.test", PW); m.sendmail("bob@example.test", ["alice@example.test"], "Subject: x\r\n\r\nx"); check("sender spoof rejected", False)
-except smtplib.SMTPSenderRefused: check("sender spoof rejected", True)
+except (smtplib.SMTPSenderRefused, smtplib.SMTPRecipientsRefused): check("sender spoof rejected", True)  # Postfix rejects at RCPT time
 try:
     m = smtp(); m.login("alice@example.test", "wrong"); check("bad login rejected", False)
 except smtplib.SMTPAuthenticationError: check("bad login rejected", True)
