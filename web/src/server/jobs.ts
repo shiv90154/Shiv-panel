@@ -4,6 +4,8 @@ import { hashAdminPassword } from "@/lib/password";
 import { ingestLogs, pruneLogs } from "./logs";
 import { refreshUsage } from "./usage";
 import { verifyDomainDns } from "./domains";
+import { tickCron } from "./cron";
+import { tickBackups } from "./backups";
 
 const safe = (name: string, fn: () => Promise<unknown>) => async () => {
   try { await fn(); } catch (e) { console.error(`[jobs] ${name} failed:`, e); }
@@ -17,8 +19,8 @@ export async function startJobs() {
   // Bootstrap: first admin from env, DKIM key files for every domain.
   await safe("bootstrap", async () => {
     const email = process.env.ADMIN_EMAIL?.toLowerCase(), pw = process.env.ADMIN_PASSWORD;
-    if (email && pw && (await prisma.adminUser.count()) === 0) {
-      await prisma.adminUser.create({ data: { email, passwordHash: await hashAdminPassword(pw) } });
+    if (email && pw && (await prisma.account.count({ where: { role: "admin" } })) === 0) {
+      await prisma.account.create({ data: { username: "admin", email, role: "admin", passwordHash: await hashAdminPassword(pw) } });
       console.log(`[jobs] created initial admin ${email}`);
     }
     await syncDkimFiles();
@@ -28,6 +30,10 @@ export async function startJobs() {
   setInterval(safe("usage", refreshUsage), 5 * 60_000);
   setTimeout(safe("usage", refreshUsage), 15_000);
   setInterval(safe("prune", () => pruneLogs(30)), 6 * 3600_000);
+  // Cron + backup schedules: tick on the minute (UTC); each has its own guard so a slow cron tick never delays backups (or vice versa).
+  const guarded = (name: string, fn: () => Promise<unknown>) => { let busy = false; return safe(name, async () => { if (busy) return; busy = true; try { await fn(); } finally { busy = false; } }); };
+  const ticks = [guarded("cron", () => tickCron()), guarded("backups", () => tickBackups())];
+  setTimeout(() => { const go = () => ticks.forEach((t) => void t()); go(); setInterval(go, 60_000); }, 60_000 - (Date.now() % 60_000));
   setInterval(safe("dns", async () => {
     for (const d of await prisma.domain.findMany({ select: { id: true } })) await verifyDomainDns(d.id);
   }), 12 * 3600_000);
