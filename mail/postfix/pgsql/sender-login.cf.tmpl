@@ -1,0 +1,5 @@
+hosts = postgres
+user = mailreader
+password = ${MAIL_DB_PASSWORD}
+dbname = ${POSTGRES_DB}
+query = SELECT email FROM mailboxes WHERE email = '%s' AND active UNION SELECT m.email FROM aliases a JOIN mailboxes m ON m.email = ANY(a.destinations) WHERE a.source = '%s' AND a.active AND m.active

@@ -1,0 +1,15 @@
+driver = pgsql
+connect = host=postgres dbname=${POSTGRES_DB} user=mailreader password=${MAIL_DB_PASSWORD}
+default_pass_scheme = BLF-CRYPT
+
+password_query = SELECT m.email AS user, m.password_hash AS password \
+  FROM mailboxes m JOIN domains d ON d.id = m.domain_id \
+  WHERE m.email = '%u' AND m.active AND d.active
+
+user_query = SELECT '/var/vmail/' || d.name || '/' || split_part(m.email, '@', 1) AS home, \
+  5000 AS uid, 5000 AS gid, \
+  CASE WHEN m.quota_mb > 0 THEN '*:storage=' || m.quota_mb || 'M' ELSE '*:storage=0' END AS quota_rule \
+  FROM mailboxes m JOIN domains d ON d.id = m.domain_id \
+  WHERE m.email = '%u' AND m.active AND d.active
+
+iterate_query = SELECT email AS user FROM mailboxes WHERE active

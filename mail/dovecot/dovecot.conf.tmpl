@@ -1,0 +1,89 @@
+protocols = imap lmtp
+listen = *
+log_path = /dev/stderr
+info_log_path = /dev/stdout
+
+# Maildir layout: /var/vmail/<domain>/<user>/Maildir  (home comes from the SQL userdb)
+mail_location = maildir:~/Maildir
+mail_privileged_group = vmail
+first_valid_uid = 5000
+last_valid_uid = 5000
+
+disable_plaintext_auth = yes
+auth_mechanisms = plain login
+auth_username_format = %Lu
+auth_failure_delay = 2 secs
+
+ssl = required
+ssl_cert = </etc/ssl/mail/fullchain.pem
+ssl_key = </etc/ssl/mail/privkey.pem
+ssl_min_protocol = TLSv1.2
+ssl_prefer_server_ciphers = yes
+
+mail_plugins = $mail_plugins quota
+
+passdb {
+  driver = sql
+  args = /etc/dovecot/dovecot-sql.conf.ext
+}
+userdb {
+  driver = sql
+  args = /etc/dovecot/dovecot-sql.conf.ext
+}
+
+namespace inbox {
+  inbox = yes
+  mailbox Drafts {
+    special_use = \Drafts
+    auto = subscribe
+  }
+  mailbox Sent {
+    special_use = \Sent
+    auto = subscribe
+  }
+  mailbox Trash {
+    special_use = \Trash
+    auto = subscribe
+  }
+  mailbox Junk {
+    special_use = \Junk
+    auto = subscribe
+  }
+  mailbox Archive {
+    special_use = \Archive
+    auto = no
+  }
+}
+
+service auth {
+  unix_listener /var/spool/postfix/private/auth {
+    mode = 0660
+    user = postfix
+    group = postfix
+  }
+}
+
+service lmtp {
+  unix_listener /var/spool/postfix/private/dovecot-lmtp {
+    mode = 0600
+    user = postfix
+    group = postfix
+  }
+}
+
+protocol lmtp {
+  mail_plugins = $mail_plugins sieve
+  postmaster_address = postmaster@${MAIL_HOSTNAME}
+}
+
+protocol imap {
+  mail_plugins = $mail_plugins imap_quota
+  mail_max_userip_connections = 30
+}
+
+plugin {
+  # Quota size comes from the SQL userdb (quota_rule). maildirsize is read by the admin UI for usage stats.
+  quota = maildir:User quota
+  quota_vsizes = no
+  sieve_before = /etc/dovecot/sieve/spam.sieve
+}

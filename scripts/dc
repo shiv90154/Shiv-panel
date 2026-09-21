@@ -1,0 +1,32 @@
+#!/bin/sh
+# Compose wrapper for LOCAL testing: no Caddy, mail ports remapped (2525/2465/2587/2143/2993), web on :3100.
+# Usage: scripts/dc up -d --build | ps | logs mail | down [-v]
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+T="${TMPDIR:-/tmp}/mailhost-local"; mkdir -p "$T"
+cat > "$T/test.env" <<ENV
+MAIL_HOSTNAME=mail.test.local
+SERVER_IPV4=203.0.113.10
+ACME_EMAIL=t@test.local
+POSTGRES_PASSWORD=pgpass123
+MAIL_DB_PASSWORD=mailpass123
+SESSION_SECRET=0123456789abcdef0123456789abcdef0123456789abcdef
+ADMIN_EMAIL=admin@test.local
+ADMIN_PASSWORD=supersecretadmin
+ENV
+cat > "$T/override.yml" <<'YML'
+services:
+  mail:
+    ports: !override
+      - "2525:25"
+      - "2465:465"
+      - "2587:587"
+      - "2143:143"
+      - "2993:993"
+  web:
+    ports: ["3100:3000"]
+    environment:
+      COOKIE_SECURE: "false"
+  caddy:
+    profiles: ["off"]
+YML
+cd "$ROOT" && exec docker compose --env-file "$T/test.env" -f docker-compose.yml -f "$T/override.yml" "$@"

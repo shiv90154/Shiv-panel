@@ -1,0 +1,22 @@
+{
+	email {$ACME_EMAIL}
+	# Certificates for autoconfig.<domain> / autodiscover.<domain> are issued on demand,
+	# but only for domains that exist in the database.
+	on_demand_tls {
+		ask http://web:3000/api/internal/tls-ask
+	}
+}
+
+# Admin panel, webmail and the mail server hostname (its certificate is also used by Postfix/Dovecot).
+{$MAIL_HOSTNAME} {
+	encode gzip
+	reverse_proxy web:3000
+}
+
+# Client auto-configuration hosts for every hosted domain (Thunderbird, Outlook, ...).
+https:// {
+	tls {
+		on_demand
+	}
+	reverse_proxy web:3000
+}

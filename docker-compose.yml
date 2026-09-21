@@ -1,0 +1,114 @@
+# Multi-domain mail platform. Everything is driven by the PostgreSQL database:
+# add a domain in the admin UI and Postfix/Dovecot/Rspamd pick it up immediately.
+name: mailhost
+
+x-restart: &restart
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    <<: *restart
+    environment:
+      POSTGRES_USER: mailadmin
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: mail
+      MAIL_DB_PASSWORD: ${MAIL_DB_PASSWORD:?set MAIL_DB_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mailadmin -d mail"]
+      interval: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    <<: *restart
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+
+  rspamd:
+    image: rspamd/rspamd:latest
+    <<: *restart
+    depends_on: [redis]
+    volumes:
+      - ./rspamd/local.d:/etc/rspamd/local.d:ro
+      - dkim:/var/lib/rspamd/dkim:ro
+      - rspamd_data:/var/lib/rspamd
+
+  mail:
+    build: ./mail
+    <<: *restart
+    hostname: ${MAIL_HOSTNAME:?set MAIL_HOSTNAME}
+    depends_on:
+      postgres: { condition: service_healthy }
+      rspamd: { condition: service_started }
+    environment:
+      MAIL_HOSTNAME: ${MAIL_HOSTNAME}
+      POSTGRES_DB: mail
+      MAIL_DB_PASSWORD: ${MAIL_DB_PASSWORD}
+      POSTFIX_INET_PROTOCOLS: ${POSTFIX_INET_PROTOCOLS:-ipv4}
+    ports:
+      - "25:25"     # SMTP (server-to-server)
+      - "465:465"   # SMTPS (implicit TLS submission)
+      - "587:587"   # Submission (STARTTLS)
+      - "143:143"   # IMAP (STARTTLS)
+      - "993:993"   # IMAPS
+    volumes:
+      - vmail:/var/vmail
+      - maillog:/var/log/mail
+      - postfix_spool:/var/spool/postfix
+      - caddy_data:/caddy-data:ro
+
+  web:
+    build: ./web
+    <<: *restart
+    depends_on:
+      postgres: { condition: service_healthy }
+    environment:
+      DATABASE_URL: postgresql://mailadmin:${POSTGRES_PASSWORD}@postgres:5432/mail?schema=public
+      MAIL_HOSTNAME: ${MAIL_HOSTNAME}
+      SERVER_IPV4: ${SERVER_IPV4:-}
+      SERVER_IPV6: ${SERVER_IPV6:-}
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:?set ADMIN_EMAIL}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD}
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN:-}
+      IMAP_HOST: mail
+      SMTP_HOST: mail
+      RSPAMD_URL: http://rspamd:11334
+      VMAIL_DIR: /var/vmail
+      DKIM_DIR: /var/lib/dkim
+      MAIL_LOG_DIR: /var/log/mail
+    volumes:
+      - vmail:/var/vmail
+      - dkim:/var/lib/dkim
+      - maillog:/var/log/mail
+
+  caddy:
+    image: caddy:2-alpine
+    <<: *restart
+    depends_on: [web]
+    environment:
+      MAIL_HOSTNAME: ${MAIL_HOSTNAME}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  pgdata:
+  redisdata:
+  vmail:
+  dkim:
+  maillog:
+  rspamd_data:
+  postfix_spool:
+  caddy_data:
+  caddy_config:

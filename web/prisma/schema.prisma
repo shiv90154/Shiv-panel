@@ -1,0 +1,98 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model AdminUser {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@map("admin_users")
+}
+
+model Domain {
+  id               String    @id @default(cuid())
+  name             String    @unique
+  active           Boolean   @default(true)
+  dkimSelector     String    @default("mail") @map("dkim_selector")
+  dkimPrivateKey   String    @map("dkim_private_key")
+  dkimPublicKey    String    @map("dkim_public_key")
+  dmarcPolicy      String    @default("quarantine") @map("dmarc_policy") // none | quarantine | reject
+  dmarcReportEmail String?   @map("dmarc_report_email")
+  spfQualifier     String    @default("~all") @map("spf_qualifier") // ~all | -all
+  defaultQuotaMb   Int       @default(1024) @map("default_quota_mb")
+  maxMailboxes     Int       @default(0) @map("max_mailboxes") // 0 = unlimited
+  dnsStatus        Json?     @map("dns_status")
+  dnsCheckedAt     DateTime? @map("dns_checked_at")
+  dnsVerified      Boolean   @default(false) @map("dns_verified")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+  mailboxes        Mailbox[]
+  aliases          Alias[]
+
+  @@map("domains")
+}
+
+model Mailbox {
+  id             String    @id @default(cuid())
+  domainId       String    @map("domain_id")
+  domain         Domain    @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  localPart      String    @map("local_part")
+  email          String    @unique
+  displayName    String?   @map("display_name")
+  passwordHash   String    @map("password_hash")
+  quotaMb        Int       @default(1024) @map("quota_mb") // 0 = unlimited
+  active         Boolean   @default(true)
+  usedBytes      BigInt    @default(0) @map("used_bytes")
+  messageCount   Int       @default(0) @map("message_count")
+  usageUpdatedAt DateTime? @map("usage_updated_at")
+  lastLoginAt    DateTime? @map("last_login_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  @@unique([domainId, localPart])
+  @@map("mailboxes")
+}
+
+model Alias {
+  id           String   @id @default(cuid())
+  domainId     String   @map("domain_id")
+  domain       Domain   @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  source       String   @unique // support@domain.com, or @domain.com for catch-all
+  destinations String[]
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@map("aliases")
+}
+
+model MailLog {
+  id        Int      @id @default(autoincrement())
+  time      DateTime
+  queueId   String?  @map("queue_id")
+  direction String // inbound | outbound | rejected | auth
+  sender    String?
+  recipient String?
+  status    String // sent | deferred | bounced | rejected | auth_failed
+  relay     String?
+  delay     Float?
+  dsn       String?
+  message   String?
+
+  @@index([time])
+  @@index([status])
+  @@map("mail_logs")
+}
+
+model Setting {
+  key   String @id
+  value String
+
+  @@map("settings")
+}

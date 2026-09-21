@@ -1,0 +1,5 @@
+hosts = postgres
+user = mailreader
+password = ${MAIL_DB_PASSWORD}
+dbname = ${POSTGRES_DB}
+query = SELECT 1 FROM mailboxes m JOIN domains d ON d.id = m.domain_id WHERE m.email = '%s' AND m.active AND d.active
