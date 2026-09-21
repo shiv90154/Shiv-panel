@@ -8,17 +8,102 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model AdminUser {
-  id           String   @id @default(cuid())
-  email        String   @unique
-  passwordHash String   @map("password_hash")
-  createdAt    DateTime @default(now()) @map("created_at")
+model Account {
+  id            String    @id @default(cuid())
+  username      String    @unique
+  email         String    @unique
+  passwordHash  String    @map("password_hash")
+  role          String    @default("user") // admin | reseller | user
+  parentId      String?   @map("parent_id") // owner in the account tree: admin -> reseller -> user
+  parent        Account?  @relation("AccountTree", fields: [parentId], references: [id], onDelete: Restrict)
+  children      Account[] @relation("AccountTree")
+  packageId     String?   @map("package_id") // null = unlimited
+  package       Package?  @relation("PackageAccounts", fields: [packageId], references: [id], onDelete: Restrict)
+  status        String    @default("active") // active | suspended
+  suspendReason String?   @map("suspend_reason")
+  totpSecret    String?   @map("totp_secret") // AES-GCM sealed base32 secret
+  totpEnabled   Boolean   @default(false) @map("totp_enabled")
+  totpLastStep  Int?      @map("totp_last_step") // last accepted 30s step (replay protection)
+  recoveryCodes String[]  @map("recovery_codes") // sha256 hashes of unused one-time codes
+  lastLoginAt   DateTime? @map("last_login_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+  ownedPackages Package[] @relation("PackageOwner")
+  apiKeys       ApiKey[]
+  webhooks      Webhook[]
+  domains       Domain[]
+  mailboxes     Mailbox[]
+  aliases       Alias[]
+  sites         Site[]
+  databases     Database[]
+  dnsZones      DnsZone[]
+  cronJobs      CronJob[]
+  backupPolicy  BackupPolicy?
+  backupRuns    BackupRun[]
 
-  @@map("admin_users")
+  @@index([parentId])
+  @@map("accounts")
+}
+
+// Resource limits. 0 = unlimited. Enforced per feature as each feature ships (see docs/SCOPE.md).
+model Package {
+  id           String    @id @default(cuid())
+  ownerId      String    @map("owner_id") // admin or reseller who created it
+  owner        Account   @relation("PackageOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  name         String
+  diskMb       Int       @default(0) @map("disk_mb")
+  bandwidthMb  Int       @default(0) @map("bandwidth_mb")
+  maxDomains   Int       @default(0) @map("max_domains")
+  maxSites     Int       @default(0) @map("max_sites")
+  maxMailboxes Int       @default(0) @map("max_mailboxes")
+  maxDatabases Int       @default(0) @map("max_databases")
+  maxFtpUsers  Int       @default(0) @map("max_ftp_users")
+  maxCronJobs  Int       @default(0) @map("max_cron_jobs")
+  cpuPercent   Int       @default(0) @map("cpu_percent")
+  ramMb        Int       @default(0) @map("ram_mb")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  accounts     Account[] @relation("PackageAccounts")
+
+  @@unique([ownerId, name])
+  @@map("packages")
+}
+
+// No FK on actor/account: history must survive account termination.
+model AuditLog {
+  id        Int      @id @default(autoincrement())
+  time      DateTime @default(now())
+  actorId   String?  @map("actor_id") // the real person (the admin/reseller while impersonating)
+  actorName String   @map("actor_name")
+  accountId String?  @map("account_id") // account whose scope the event belongs to
+  action    String
+  target    String?
+  ip        String?
+  detail    Json?
+
+  @@index([time])
+  @@index([accountId, time])
+  @@map("audit_logs")
+}
+
+model ApiKey {
+  id         String    @id @default(cuid())
+  accountId  String    @map("account_id")
+  account    Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  name       String
+  prefix     String // first characters, for display
+  keyHash    String    @unique @map("key_hash") // sha256 of the full key
+  lastUsedAt DateTime? @map("last_used_at")
+  revokedAt  DateTime? @map("revoked_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  @@index([accountId])
+  @@map("api_keys")
 }
 
 model Domain {
   id               String    @id @default(cuid())
+  accountId        String    @map("account_id")
+  account          Account   @relation(fields: [accountId], references: [id], onDelete: Restrict)
   name             String    @unique
   active           Boolean   @default(true)
   dkimSelector     String    @default("mail") @map("dkim_selector")
@@ -37,11 +122,48 @@ model Domain {
   mailboxes        Mailbox[]
   aliases          Alias[]
 
+  @@index([accountId])
   @@map("domains")
+}
+
+// A hosted website: one container (runtime image) + one Caddy route. Files live in /srv/accounts/<accountId>/<id>.
+model Site {
+  id           String       @id @default(cuid())
+  accountId    String       @map("account_id")
+  account      Account      @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  name         String
+  runtime      String // static | php-8.x | node-N | python (whitelist lives in agent/sites.mjs)
+  startCommand String?      @map("start_command") // node/python only
+  forceHttps   Boolean      @default(true) @map("force_https")
+  envSealed    String?      @map("env_sealed") // AES-GCM sealed JSON {KEY: value}
+  redirects    Json         @default("[]") // [{from, to, code}]
+  status       String       @default("creating") // creating | running | stopped | error
+  lastError    String?      @map("last_error")
+  createdAt    DateTime     @default(now()) @map("created_at")
+  updatedAt    DateTime     @updatedAt @map("updated_at")
+  domains      SiteDomain[]
+  cronJobs     CronJob[]
+
+  @@unique([accountId, name])
+  @@map("sites")
+}
+
+// Every hostname a site answers to (primary, www, subdomains, addon domains). Globally unique.
+model SiteDomain {
+  id      String  @id @default(cuid())
+  siteId  String  @map("site_id")
+  site    Site    @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  name    String  @unique
+  primary Boolean @default(false)
+
+  @@index([siteId])
+  @@map("site_domains")
 }
 
 model Mailbox {
   id             String    @id @default(cuid())
+  accountId      String    @map("account_id")
+  account        Account   @relation(fields: [accountId], references: [id], onDelete: Restrict)
   domainId       String    @map("domain_id")
   domain         Domain    @relation(fields: [domainId], references: [id], onDelete: Cascade)
   localPart      String    @map("local_part")
@@ -57,11 +179,14 @@ model Mailbox {
   createdAt      DateTime  @default(now()) @map("created_at")
 
   @@unique([domainId, localPart])
+  @@index([accountId])
   @@map("mailboxes")
 }
 
 model Alias {
   id           String   @id @default(cuid())
+  accountId    String   @map("account_id")
+  account      Account  @relation(fields: [accountId], references: [id], onDelete: Restrict)
   domainId     String   @map("domain_id")
   domain       Domain   @relation(fields: [domainId], references: [id], onDelete: Cascade)
   source       String   @unique // support@domain.com, or @domain.com for catch-all
@@ -69,6 +194,7 @@ model Alias {
   active       Boolean  @default(true)
   createdAt    DateTime @default(now()) @map("created_at")
 
+  @@index([accountId])
   @@map("aliases")
 }
 
@@ -95,4 +221,116 @@ model Setting {
   value String
 
   @@map("settings")
+}
+
+// A tenant database on the host's MariaDB/PostgreSQL server (created via the agent). One same-named user per database.
+model Database {
+  id             String   @id @default(cuid())
+  accountId      String   @map("account_id")
+  account        Account  @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  engine         String // mariadb | postgres
+  name           String // also the database user; globally unique per engine (server-wide namespace)
+  passwordSealed String   @map("password_sealed") // AES-GCM sealed
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@unique([engine, name])
+  @@index([accountId])
+  @@map("app_databases")
+}
+
+// An authoritative DNS zone hosted on PowerDNS (created via the agent). Records live only in PowerDNS; this row is ownership.
+model DnsZone {
+  id        String   @id @default(cuid())
+  accountId String   @map("account_id")
+  account   Account  @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  name      String   @unique
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([accountId])
+  @@map("dns_zones")
+}
+
+// A scheduled command that runs inside a site's container (web app ticks every minute, agent executes). Schedule is 5-field cron in UTC.
+model CronJob {
+  id           String    @id @default(cuid())
+  accountId    String    @map("account_id")
+  account      Account   @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  siteId       String    @map("site_id")
+  site         Site      @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  schedule     String
+  command      String
+  enabled      Boolean   @default(true)
+  lastRunAt    DateTime? @map("last_run_at")
+  lastExitCode Int?      @map("last_exit_code")
+  runningSince DateTime? @map("running_since")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  runs         CronRun[]
+
+  @@index([accountId])
+  @@index([siteId])
+  @@map("cron_jobs")
+}
+
+// Run history (last 20 per job are kept). exitCode null = could not run / killed.
+model CronRun {
+  id         String   @id @default(cuid())
+  jobId      String   @map("job_id")
+  job        CronJob  @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  startedAt  DateTime @default(now()) @map("started_at")
+  durationMs Int      @default(0) @map("duration_ms")
+  exitCode   Int?     @map("exit_code")
+  output     String   @default("")
+
+  @@index([jobId, startedAt])
+  @@map("cron_runs")
+}
+
+// One restic backup schedule per account. hour is UTC; weekly runs on Sunday.
+model BackupPolicy {
+  accountId        String    @id @map("account_id")
+  account          Account   @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  enabled          Boolean   @default(false)
+  frequency        String    @default("daily") // daily | weekly
+  hour             Int       @default(3)
+  keepDaily        Int       @default(7) @map("keep_daily")
+  keepWeekly       Int       @default(4) @map("keep_weekly")
+  keepMonthly      Int       @default(3) @map("keep_monthly")
+  includeSites     Boolean   @default(true) @map("include_sites")
+  includeDatabases Boolean   @default(true) @map("include_databases")
+  includeMail      Boolean   @default(true) @map("include_mail")
+  lastRunAt        DateTime? @map("last_run_at")
+
+  @@map("backup_policies")
+}
+
+model BackupRun {
+  id         String    @id @default(cuid())
+  accountId  String    @map("account_id")
+  account    Account   @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  trigger    String // manual | schedule
+  status     String    @default("running") // running | ok | partial | error
+  startedAt  DateTime  @default(now()) @map("started_at")
+  finishedAt DateTime? @map("finished_at")
+  results    Json      @default("[]") // [{kind, name, ok, error?}]
+  error      String?
+
+  @@index([accountId, startedAt])
+  @@map("backup_runs")
+}
+
+// Outgoing events for accounts below the owner (admin: everything, reseller: its customers). Secret is AES-GCM sealed.
+model Webhook {
+  id            String    @id @default(cuid())
+  accountId     String    @map("account_id")
+  account       Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  url           String
+  secret        String
+  active        Boolean   @default(true)
+  lastAt        DateTime? @map("last_at")
+  lastStatus    String?   @map("last_status")
+  failures      Int       @default(0)
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  @@index([accountId])
+  @@map("webhooks")
 }
