@@ -2,26 +2,61 @@
 Legend: [ ] todo · [~] in progress · [x] done · ✔ verified (how)
 
 ## Status snapshot
-- Mail platform: **built + e2e verified locally** (2026-09-21): authenticated SMTP send, IMAP delivery, alias delivery, sender-spoof rejection, bad-login rejection, DKIM signature, log ingest, admin/webmail pages load, autoconfig XML.
+- Mail platform: **built + e2e verified locally before Phase 0** (2026-09-21; re-run required after Phase 0, see Next actions): authenticated SMTP send, IMAP delivery, alias delivery, sender-spoof rejection, bad-login rejection, DKIM signature, log ingest, admin/webmail pages load, autoconfig XML.
 - NOT verified: webmail UI click-through, admin actions via browser, real DNS/Let's Encrypt, deployment on a real VPS.
-- Hosting-panel expansion: planning approved (`docs/SCOPE.md`); implementation not started beyond Step 0.
+- Hosting-panel expansion: **Phase 0 (foundation) built** (2026-09-21) - accounts/roles/2FA/audit/impersonation/tenancy, agent skeleton, cPanel + WHM UI. Phase 1 (websites) built, Phase 2 (file manager + databases) built, see below. Phase 3 (DNS zone editor) built, see below. Phase 4 (backups + cron) built, see below. Phase 5 (API/webhooks/WHMCS/reseller caps) built, see below. Phase 6 not started.
+- Phase 0 verification: typecheck + `next build` pass; 6 unit tests pass; 65-check tenant-isolation E2E passes against the real built app on an in-memory Postgres (pglite) with real Prisma migrations; migration backfill tested on legacy data. **NOT verified: Docker stack / mail e2e / Linux VPS** (Docker Desktop unresponsive, see Step 0).
 
 ## Step 0 — context system
 - [x] CLAUDE.md, docs/SCOPE.md, docs/ARCHITECTURE.md, docs/DECISIONS.md, PROGRESS.md
 - [x] scripts/dc (local compose wrapper), scripts/e2e-mail.py (regression)
-- [ ] Run `scripts/e2e-mail.py` from the committed script once and record result here. **Attempt 1 failed to start**: Docker Desktop returned 500 (host disk had 2.6 GB free). The same checks were run manually earlier and passed; the script itself is UNTESTED. Free disk (>10 GB), restart Docker, `scripts/dc up -d --build`, then run it.
+- [x] `scripts/e2e-mail.py` run on the real Docker stack (2026-09-21, after Phase 0-5 code): 5/5 PASS (send, spoof rejected, bad login rejected, IMAP delivery, DKIM). First run exposed a script bug (spoof is rejected at RCPT time -> `SMTPRecipientsRefused`); fixed in the script, server behaviour was correct. Docker only worked after freeing Mac disk (needs >10 GB free; caches cleaned).
 
-## Phase 0 — foundation
-- [ ] Prisma: Account, Package, AuditLog, ApiKey; accountId on Domain/Mailbox/Alias (+ migration, keep mailreader grants)
-- [ ] Role-aware sessions, TOTP 2FA, impersonation, `scopeFor()` + `requireRole()`
-- [ ] Agent skeleton + RPC client (`web/src/server/agent.ts`)
-- [ ] cPanel-style UI: design tokens, Tile/Meter/SectionCard/DataTable, user home, WHM shell; migrate existing pages
-- [ ] Tenant isolation test (two accounts)
-## Phase 1 — websites  [ ]
-## Phase 2 — databases, file manager, SFTP/FTP  [ ]
-## Phase 3 — PowerDNS  [ ]
-## Phase 4 — backups + cron  [ ]
-## Phase 5 — reseller/packages enforcement, REST API, webhooks, WHMCS module  [ ]
+## Phase 0 — foundation  [x] built, see verification notes
+- [x] Prisma: Account, Package, AuditLog, ApiKey; `account_id` (required FK, RESTRICT) on Domain/Mailbox/Alias; `admin_users` folded into `accounts` (migration `0003_accounts`; mailreader grants untouched - new columns are not granted) ✔ migration applied with real `prisma migrate deploy` on pglite; backfill + RESTRICT tested with legacy rows (3 admins incl. username collisions), fresh DB path tested
+- [x] Role-aware sessions (`panel_session` JWT, password-fingerprint revocation), `requireRole()`/`scopeFor()`/`getOwned*()`, TOTP 2FA (+8 recovery codes, replay protection), impersonation (admin->any non-admin, reseller->own users, no nesting, banner, audited), suspend/unsuspend/terminate, audit log ✔ e2e-tenancy.py + `npm test` (RFC 6238 vectors)
+- [x] Agent skeleton: `agent/agent.mjs` (zero-dep, bearer secret, whitelist: `agent.ping`, `system.info`) + typed client `web/src/server/agent.ts`; shown on Server status ✔ ran locally on macOS over TCP (auth/unknown-method/bad-params rejected). NOT tested: unix-socket mode, systemd unit, container->host reachability (`host.docker.internal`)
+- [x] UI: design tokens + `Tile/Meter/SectionCard/DataTable/Icon`, cPanel home (`/cpanel`: search + tiles + usage sidebar), WHM shell (`/admin`), all existing pages migrated + role-scoped; login is now `/login` (email or username) ✔ pages exercised over HTTP; NOT visually reviewed in a browser
+- [x] Package limits enforced now: domains + mailboxes (`assertWithinPackage`); other limits land with their features
+- [x] Tenant isolation test: `scripts/e2e-tenancy.py [BASE_URL]` (two users, reseller subtree, replayed foreign action forms, limits, impersonation, suspend, 2FA, audit scoping). Mutation-checked: with `scopeFor` disabled it fails (and a replayed delete really deleted the other tenant's domain).
+- Known gaps (deliberate, by phase): suspension only blocks panel login (mail/sites keep running until Phase 5 enforcement); a suspended reseller's customers are not auto-suspended; reseller's own package does not cap what it can hand out; per-mailbox `quota 0` can bypass package disk (disk enforcement = Phase 5); ApiKey has a table but no UI/API yet (Phase 5); reseller white-label (name/logo/domain) not done (Phase 5); login rate limiter still in-memory.
+## Phase 1 — websites  [~] core built; deploy path UNTESTED on a real host
+- [x] `Site` + `SiteDomain` models (migration `0004_sites`, generated with `prisma migrate diff` from the pre-change schema), env vars sealed with AES-GCM, redirects JSON, `maxSites` enforced (`assertWithinPackage`), terminate account deletes its sites
+- [x] Agent v0.2.0 (`agent/sites.mjs`): `site.apply|start|stop|status|logs|delete`. Runtime whitelist: static (nginx), PHP 8.1-8.4 (apache), Node 18/20/22, Python 3.12; one container per site (cap-drop ALL, no-new-privileges, pids limit, memory/CPU from package), files in `/srv/accounts/<account>/<site>` (path-jailed), one Caddy snippet per site + reload via Caddy admin API; snippet rolled back if reload fails
+- [x] UI (shared WHM/cPanel pages): sites list/create, detail with start/stop/redeploy, start command, force-HTTPS, extra domains/subdomains/addon domains, redirects, env vars, logs, delete; cPanel tile + nav
+- [x] ✔ `node --test agent/test/sites.test.mjs` (validation rejects injection attempts; docker args/Caddy snippet), `npm test`, typecheck, `next build`
+- [ ] NOT verified: any real deploy (no Docker/Linux here) - docker run flags, container->Caddy networking (`DOCKER_NETWORK`), Caddy `/load` of the Caddyfile + `import` of snippets, admin API `origins`, file ownership per runtime, TLS issuance
+- [x] `scripts/e2e-tenancy.py` sites block (isolation, replayed forms, domain claiming) ✔ RUN on the Docker stack 2026-09-21: found A opening B's site page / file manager returned 500 (uncaught `getOwnedSite` throw) instead of 404 - fixed with `notFound()` in `sites/[id]/page.tsx` and `files/page.tsx`; now 81 checks ALL PASS
+- [ ] Not built (still in SCOPE): Docker image/compose runtime, Git deploy, one-click WordPress (needs Phase 2 databases), per-site access logs (only container logs), SSL status display
+## Phase 2 — databases, file manager, SFTP/FTP  [~] file manager + databases built; SFTP/FTP NOT started
+- [x] Agent v0.3.0: `agent/files.mjs` (`file.list|read|write|mkdir|delete|rename|chmod|zip|unzip`, jailed per site, symlink-safe) and `agent/databases.mjs` (`db.create|setPassword|drop` for MariaDB + PostgreSQL); request body cap raised to 36 MB for uploads (25 MB file limit)
+- [x] Web: `Database` model (migration `0005_databases`, generated from the pre-change schema), `maxDatabases` enforced, terminate account drops its databases, file manager page (browse/upload/edit/new file+folder/rename/chmod/zip/unzip/delete) and Databases page (create/show password/reset/delete) in both shells, cPanel tiles + Databases meter, link from site page
+- [x] ✔ `node --test agent/test/*.test.mjs` (9 pass: jail traversal + symlink escapes, param validation, SQL builders, rename/zip/unzip round trip); the agent file methods were also smoke-run on macOS against a temp `SITES_ROOT` (found + fixed a rename bug); `npm test`, typecheck, `next build` pass
+- [ ] NOT verified: any real DB create/drop (no MariaDB/PostgreSQL server here; `mariadb`/`psql` CLI invocations, `'%'` host grant, PG `WITH (FORCE)` needs PG13+), chown to runtime uid (needs root/Linux), zip/unzip on the VPS, browser click-through, `e2e-tenancy.py` (new files+databases block WRITTEN, NOT RUN; Docker unavailable), `e2e-mail.py`
+- [ ] Not built (still in SCOPE): SFTP (chrooted virtual users), FTP (TLS only), phpMyAdmin/Adminer SSO, per-DB size display, remote-access allow-list, DB user separate from DB, file download/move/copy, multi-select, disk quota enforcement
+## Phase 3 — PowerDNS  [~] zone editor + DNSSEC built; NOT run against a real PowerDNS
+- [x] Agent v0.4.0 `agent/dns.mjs`: `dns.zoneCreate|zoneDelete|zoneGet|recordAdd|recordDelete|dnssec` over the PowerDNS HTTP API; pure validators (record names jailed to the zone, per-type content builders for A/AAAA/CNAME/MX/TXT/SRV/CAA/NS, TXT chunking, TTL bounds, apex NS/CNAME/SOA protected) (DECISIONS #19)
+- [x] Web: `DnsZone` model (migration `0006_dns`, hand-written like 0004/0005: no shadow DB here), `server/dns.ts`, `admin/dns-actions.ts`, zone list + zone detail (add/delete records, DNSSEC enable/disable + DS) in both shells, cPanel tile + nav, account terminate deletes zones, starter template (A/www + mail records when the same account has that mail domain)
+- [x] ✔ `node --test agent/test/*.test.mjs` (12 pass, 3 new DNS tests), `npm test`, `tsc --noEmit`, `next build` pass; `prisma validate` ok
+- [ ] NOT verified: any call to a real PowerDNS (no pdns here): payload shapes for zone create (`nameservers` + follow-up PATCH), rrset REPLACE/DELETE, cryptokey POST (`algorithm: "ecdsap256sha256"`) and the `ds` field, `?rrsets=true&rrset_name=` filter; pdns.conf from DECISIONS #19; browser click-through; migration 0006 applied; `e2e-tenancy.py` has NO zone block yet (needs an agent/PowerDNS to create zones, or a stub)
+- [ ] Not built (still in SCOPE): DNS templates as an admin-editable feature (only a fixed starter set), Cloudflare as a zone provider, edit-in-place (delete + add instead), zone import/export, secondary/AXFR, PowerDNS install/compose service, resolvers/glue guidance
+## Phase 4 — backups + cron  [~] built; NOT run against real restic/Docker
+- [x] Agent v0.5.0: `agent/cron.mjs` (`cron.run`: docker exec in the site container as its uid, `timeout -s KILL`, output cap, account-label check) and `agent/backup.mjs` (`backup.run|list|restore|deleteSnapshot|purgeAccount`; restic repo per account; site files, DB dumps via stdin, Maildir; retention; restore verifies host/tag/path) (DECISIONS #20, #21)
+- [x] Web: models `CronJob`, `CronRun`, `BackupPolicy`, `BackupRun` (migration `0007_cron_backups`, generated with `prisma migrate diff` from the pre-change schema), `lib/cron.ts` + `lib/backup-schedule.ts` (pure), `server/cron.ts`, `server/backups.ts`, minute ticker in `jobs.ts`, pages `cron` + `backups` in both shells (schedule/retention form, back up now, runs, snapshots with restore/delete), cPanel tiles + cron meter, `maxCronJobs` enforced, account terminate purges the backup repo
+- [x] ✔ `node --test agent/test/*.test.mjs` (18 pass; incl. backup.run flow against a stub restic), `npm test` (cron parser + backup slots), `tsc --noEmit`, `next build`
+- [ ] NOT verified: real restic (init/backup/forget/restore/dump flag behavior, `--one-file-system`, `summary.total_bytes_processed` needs restic >= 0.17 else size shows "-"), mariadb-dump/pg_dump/restore pipes, real `docker exec` + `timeout` inside each runtime image, migration 0007 applied, browser click-through, ticker timing, `e2e-tenancy.py` (no cron/backup block yet), `e2e-mail.py`
+- [ ] Not built (still in SCOPE): off-site backup targets (S3/SFTP), per-item restore of single files, backup of Docker image/compose sites, cron output e-mail, a cron/backup disk quota
+
+## Phase 5 — reseller caps, REST API, webhooks, WHMCS module  [~] built; NOT run against a live stack
+- [x] Reseller cap: a reseller's packages may not exceed its own package (`packageOverruns`, 0 = unlimited counts as exceeding a capped field); enforced on package create/update
+- [x] `Webhook` model (migration `0008_webhooks`, hand-written); `server/webhooks.ts`: HMAC-SHA256 signed POST (`X-Webhook-Signature`/`-Timestamp`), https only, private-IP refusal at save AND at delivery (DNS re-resolved), no redirects, 8 s timeout; events `account.created|suspended|unsuspended|terminated|package_changed` go to the webhooks of every ancestor of the account
+- [x] API keys (`shk_...`, only sha256 stored, shown once via sealed flash), page `/admin/api` (keys + webhooks) for admin/reseller; `lib/apikey.ts` (only active admin/reseller may use a key)
+- [x] REST `/api/v1`: `GET packages`, `GET|POST accounts`, `GET|DELETE accounts/{username}`, `POST accounts/{username}/suspend|unsuspend|password|package`; scoped to the key owner's subtree (never self/admins), audited (`via: api`), failed-auth rate limit; suspend/terminate logic shared with the UI in `server/accounts.ts`
+- [x] WHMCS module `integrations/whmcs/modules/servers/shivapphub/shivapphub.php` (Create/Suspend/Unsuspend/Terminate/ChangePassword/ChangePackage/TestConnection; server Password field = API key)
+- [x] ✔ `npm test` (13 pass; new: package overruns, private-IP detection, webhook URL check, signature), `tsc --noEmit`, `next build`
+- [ ] NOT verified: migration 0008 applied, any API call over HTTP, webhook delivery to a real receiver, the PHP module (no php here, not even `php -l`; never run inside WHMCS), `e2e-tenancy.py` has NO API block yet (key scoping is untested end to end), `e2e-mail.py`, browser click-through of `/admin/api`
+- [ ] Not built (still in SCOPE): reseller white-label (name/logo/domain), enforcement of suspension on mail/sites, disk/CPU/RAM/bandwidth enforcement, API key expiry/scopes, webhook retries/delivery log, WHMCS client-area single sign-on, usage sync
+
 ## Phase 6 — security hardening, monitoring, self-update  [ ]
 
 ## Known bugs / notes
@@ -30,6 +65,9 @@ Legend: [ ] todo · [~] in progress · [x] done · ✔ verified (how)
 - Dev Docker Desktop needed a purge once; test agent/site features on Linux.
 
 ## Next 3 actions
-1. Run `python3 scripts/e2e-mail.py` against `scripts/dc up -d --build`; record result.
-2. Phase 0: Prisma models + migration for Account/Package/AuditLog.
-3. Phase 0: design tokens + cPanel-style shell/home.
+0. Phase 5: apply migration 0008 on the stack, add an API block to `e2e-tenancy.py` (reseller key can't touch another reseller's users or admins; revoked/suspended-owner key gets 401), `php -l` + a test WHMCS install.
+1. Free disk (>10 GB), restart Docker, `scripts/dc up -d --build`, then run BOTH `python3 scripts/e2e-mail.py` (never re-run since Phase 0; seed now sets accountId) and `python3 scripts/e2e-tenancy.py http://localhost:3100`; record results here.
+2. Phase 2: on a Linux VM install MariaDB + PostgreSQL, set agent env (see DECISIONS #18), create one DB per engine, upload/edit/zip files in a site. Then SFTP/FTP.
+3. Phase 3: on a Linux VM install pdns + gpgsql, configure per DECISIONS #19, create a zone, `dig @server` records, enable DNSSEC. Then Phase 4 check: install restic, set BACKUP_ROOT/RESTIC_PASSWORD, run a backup + restore of one site, one DB, one mail domain; create a cron job and check history.
+3b. Phase 1: on a Linux VM run the agent with SITES_ROOT/CADDY_SITES_DIR/CADDYFILE_PATH/DOCKER_NETWORK, create one site per runtime, check HTTPS + logs + redirects; run `e2e-tenancy.py`. Then Phase 3 (PowerDNS).
+4. Verify agent from the container on Linux (`AGENT_URL=http://host.docker.internal:7701`, `AGENT_LISTEN=<bridge ip>:7701`) and the unix-socket mode.

@@ -24,7 +24,7 @@ cp .env.example .env      # fill in every value (see comments)
 docker compose up -d --build
 docker compose logs -f web mail
 ```
-1. Open `https://MAIL_HOSTNAME/admin`, sign in with `ADMIN_EMAIL` / `ADMIN_PASSWORD` (change it under *Account*).
+1. Open `https://MAIL_HOSTNAME/login`, sign in with `ADMIN_EMAIL` (or username `admin`) / `ADMIN_PASSWORD` (change it and enable 2FA under *My account*). Create resellers and hosting accounts under *Accounts*.
 2. **Domains -> Add domain**. The domain page lists the exact MX / SPF / DKIM / DMARC (+ autoconfig/autodiscover) records.
    Copy them to your DNS provider - or, if `CLOUDFLARE_API_TOKEN` is set, click **Publish to Cloudflare**. Click **Verify DNS**.
 3. **Mailboxes -> Create mailbox**, then sign in at `https://MAIL_HOSTNAME/webmail` or add the account to a client.
