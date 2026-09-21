@@ -3,7 +3,7 @@
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
 a{color:var(--brand);text-decoration:none}a:hover{text-decoration:underline}
 h1{font-size:22px;margin:0 0 4px}h2{font-size:16px;margin:0 0 12px}.muted{color:var(--muted)}.sub{color:var(--muted);margin:0 0 20px}
-.shell{display:grid;grid-template-columns:220px 1fr;min-height:100vh}
+.shell{display:grid;grid-template-columns:232px 1fr;min-height:100vh}
 .side{background:var(--card);border-right:1px solid var(--line);padding:20px 12px;display:flex;flex-direction:column;gap:2px;position:sticky;top:0;height:100vh}
 .side .brand{font-weight:700;font-size:16px;padding:0 10px 16px}.side a{padding:8px 10px;border-radius:8px;color:var(--fg)}.side a:hover{background:var(--bg);text-decoration:none}
 .side .spacer{flex:1}.main{padding:28px;max-width:1200px;width:100%}
@@ -31,3 +31,31 @@ details{border:1px solid var(--line);border-radius:8px;padding:6px 10px;margin:2
 .wm .msg.unseen b{font-weight:700}.wm .msg .s{color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.wm .msg.cur{background:var(--bg)}
 .wm .view{padding:20px;border-right:0}.wm iframe{width:100%;height:65vh;border:1px solid var(--line);border-radius:8px;background:#fff}.wm pre{white-space:pre-wrap;font:inherit}
 @media(max-width:1000px){.wm{grid-template-columns:1fr;height:auto}.wm>div{border-right:0;border-bottom:1px solid var(--line);max-height:none}}
+
+/* ---- design tokens (shared by the WHM shell, the cPanel shell and every component) ---- */
+:root{--radius:12px;--shadow:0 1px 2px rgba(16,24,40,.05);--tile:#fff;--tile-hover:#f0f5ff}
+@media(prefers-color-scheme:dark){:root{--shadow:none;--tile:#171d2b;--tile-hover:#1d2640}}
+.card{box-shadow:var(--shadow)}
+.card-head{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px}.card-head h2{margin:0}
+.side h6{margin:14px 10px 4px;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.side a.cur{background:var(--bg);font-weight:600}
+.side .who{padding:6px 10px;color:var(--muted);font-size:12px;word-break:break-all}
+.imp{background:var(--warnbg);color:var(--warn);padding:8px 16px;display:flex;gap:12px;align-items:center;justify-content:center;flex-wrap:wrap;border-bottom:1px solid var(--line)}
+.imp form{display:inline}
+/* meter */
+.meter{margin-bottom:14px}.meter-head{display:flex;justify-content:space-between;gap:8px;margin-bottom:4px;font-size:13px}
+/* cPanel shell */
+.cp-top{display:flex;align-items:center;gap:16px;padding:12px 24px;background:var(--card);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+.cp-top .brand{font-weight:700;font-size:16px;color:var(--fg)}.cp-top .grow{flex:1}.cp-top a{color:var(--fg)}
+.cp-page{max-width:1300px;margin:0 auto;padding:24px}.cp-home{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:24px;align-items:start}
+.cp-top nav{display:flex;gap:4px;flex-wrap:wrap}.cp-top nav a{padding:6px 10px;border-radius:8px}.cp-top nav a:hover{background:var(--bg);text-decoration:none}.cp-top nav a.cur{background:var(--bg);font-weight:600}
+@media(max-width:900px){.cp-home{grid-template-columns:1fr}.cp-page{padding:16px}.cp-top{padding:10px 16px;flex-wrap:wrap}}
+.search{padding:12px 14px;font-size:15px;margin-bottom:18px;border-radius:var(--radius)}
+.tile-group{margin-bottom:22px}.tile-group h3{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:0 0 10px}
+.tiles{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}
+.tile{display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center;padding:16px 10px;background:var(--tile);border:1px solid var(--line);border-radius:var(--radius);color:var(--fg);box-shadow:var(--shadow)}
+.tile:hover{background:var(--tile-hover);text-decoration:none;border-color:var(--brand)}.tile-icon{color:var(--brand)}.tile-label{font-weight:600}.tile-hint{font-size:12px;color:var(--muted)}
+.crumbs{margin:0 0 14px;color:var(--muted)}
+.codes{font-family:ui-monospace,Menlo,monospace;columns:2;max-width:320px;padding:12px;background:var(--bg);border-radius:8px;line-height:1.9}
+
+[hidden]{display:none!important}
