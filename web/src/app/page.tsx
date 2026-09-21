@@ -4,11 +4,11 @@ export default function Home() {
   return (
     <div className="center">
       <div className="card login" style={{ textAlign: "center" }}>
-        <h1>MailHost</h1>
-        <p className="sub">Self-hosted mail platform</p>
+        <h1>Hosting panel</h1>
+        <p className="sub">Mail, domains and hosting</p>
         <div className="actions" style={{ justifyContent: "center" }}>
           <Link className="btn primary" href="/webmail">Open webmail</Link>
-          <Link className="btn" href="/admin">Admin</Link>
+          <Link className="btn" href="/login">Sign in</Link>
         </div>
       </div>
     </div>

@@ -16,6 +16,7 @@ export async function run(path: string, fn: () => Promise<string | void>): Promi
   let ok: string | undefined, error: string | undefined;
   try { ok = (await fn()) || "Done"; } catch (e) { error = message(e); console.error("[action]", e); }
   revalidatePath("/admin", "layout");
+  revalidatePath("/cpanel", "layout");
   const qs = new URLSearchParams(error ? { error } : { ok: ok! });
   redirect(`${path}${path.includes("?") ? "&" : "?"}${qs}`);
 }

@@ -20,8 +20,10 @@ export function middleware(req: NextRequest) {
     return new NextResponse("Not found", { status: 404 });
   }
 
-  if (lower.startsWith("/admin") && !lower.startsWith("/admin/login") && !req.cookies.get("admin_session")) {
-    url.pathname = "/admin/login";
+  if (lower.startsWith("/admin/login")) { url.pathname = "/login"; return NextResponse.redirect(url); } // old login URL
+  // Coarse gate only: real authorization (signature, role, status) happens in requireSession()/requireRole().
+  if ((lower === "/admin" || lower.startsWith("/admin/") || lower === "/cpanel" || lower.startsWith("/cpanel/")) && !req.cookies.get("panel_session")) {
+    url.pathname = "/login";
     return NextResponse.redirect(url);
   }
   if (lower.startsWith("/webmail") && !lower.startsWith("/webmail/login") && !req.cookies.get("wm_session")) {
