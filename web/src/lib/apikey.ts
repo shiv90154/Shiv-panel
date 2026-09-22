@@ -11,14 +11,18 @@ export function generateApiKey() {
   return { key, prefix: key.slice(0, 12), keyHash: sha256(key) };
 }
 
-/** Resolves a Bearer key to an acting session. Only active admin/reseller accounts may use the API. */
-export async function authenticateKey(header: string | null): Promise<Session | null> {
+export type ApiScope = "full" | "read";
+export type ApiAuth = { session: Session; scope: ApiScope };
+
+/** Resolves a Bearer key to an acting session + its scope. Only active admin/reseller accounts may use the API. */
+export async function authenticateKey(header: string | null): Promise<ApiAuth | null> {
   const m = header?.match(/^Bearer\s+(shk_[A-Za-z0-9_-]{20,80})$/);
   if (!m) return null;
   const row = await prisma.apiKey.findUnique({ where: { keyHash: sha256(m[1]) }, include: { account: true } });
   if (!row || row.revokedAt) return null;
+  if (row.expiresAt && row.expiresAt.getTime() <= Date.now()) return null;
   const a = row.account;
   if (a.status !== "active" || (a.role !== "admin" && a.role !== "reseller")) return null;
   if (!row.lastUsedAt || Date.now() - row.lastUsedAt.getTime() > 60_000) await prisma.apiKey.update({ where: { id: row.id }, data: { lastUsedAt: new Date() } }).catch(() => {});
-  return { account: a, actor: null, role: a.role as Role, impersonating: false, base: "/admin" };
+  return { session: { account: a, actor: null, role: a.role as Role, impersonating: false, base: "/admin" }, scope: row.scope as ApiScope };
 }

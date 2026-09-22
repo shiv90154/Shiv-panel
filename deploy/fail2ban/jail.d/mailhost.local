@@ -1,0 +1,21 @@
+# Copy to /etc/fail2ban/jail.d/, the filter to filter.d/, the action to action.d/, then: systemctl restart fail2ban
+# Adjust logpath: the mail container's `maillog` volume, e.g. `docker volume inspect mailhost_maillog -f '{{.Mountpoint}}'` + /mail.log
+[DEFAULT]
+banaction = mailhost-nft
+bantime   = 1h
+findtime  = 10m
+maxretry  = 5
+# your own address(es), space separated, so a typo never bans you
+ignoreip  = 127.0.0.1/8 ::1
+
+[sshd]
+enabled = true
+# Debian/Ubuntu: backend = systemd reads the journal; if sshd logs to /var/log/auth.log instead, remove this line
+backend = systemd
+
+[mailhost-postfix-sasl]
+enabled  = true
+filter   = mailhost-postfix-sasl
+port     = smtp,submission,smtps
+logpath  = /var/lib/docker/volumes/mailhost_maillog/_data/mail.log
+maxretry = 5

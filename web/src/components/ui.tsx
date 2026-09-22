@@ -86,3 +86,27 @@ export function Icon({ name, size = 28 }: { name: string; size?: number }) {
     </svg>
   );
 }
+
+/** One metric, one line: a small multiple (never combine two units on one axis). Gaps in the data (null) break the line instead of interpolating. */
+export function Sparkline({ label, points, unit = "", decimals = 0, width = 260, height = 48 }: { label: string; points: { ts: number; v: number | null }[]; unit?: string; decimals?: number; width?: number; height?: number }) {
+  const vals = points.map((p) => p.v).filter((v): v is number => v !== null);
+  const last = vals.length ? points[points.length - 1].v : null;
+  const fmt = (v: number) => v.toFixed(decimals) + unit;
+  if (!vals.length) return <div className="spark"><div className="spark-head"><span>{label}</span><b className="muted">no data</b></div><svg width={width} height={height} /></div>;
+  const max = Math.max(...vals, 1), min = Math.min(0, ...vals), span = max - min || 1;
+  const step = width / Math.max(1, points.length - 1);
+  let d = "", drawing = false;
+  points.forEach((p, i) => {
+    if (p.v === null) { drawing = false; return; }
+    const x = i * step, y = height - ((p.v - min) / span) * height;
+    d += `${drawing ? "L" : "M"}${x.toFixed(1)},${y.toFixed(1)} `; drawing = true;
+  });
+  return (
+    <div className="spark">
+      <div className="spark-head"><span>{label}</span><b>{last === null ? "-" : fmt(last)}</b></div>
+      <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
+        <path d={d} fill="none" stroke="var(--brand)" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    </div>
+  );
+}

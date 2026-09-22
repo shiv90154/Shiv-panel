@@ -1,15 +1,18 @@
-import { Badge, Flash, bytes } from "@/components/ui";
+import { Badge, Flash, Sparkline, bytes } from "@/components/ui";
 import { getServerStatus } from "@/server/status";
 import { checkServerDns } from "@/lib/dns";
 import { config } from "@/lib/config";
 import { requireRole } from "@/lib/session";
 import { getAgentStatus } from "@/server/agent";
+import { getMetricSeries } from "@/server/security";
+import { parseRange, RANGES, type RangeKey } from "@/lib/security-core";
 import { resyncDkim } from "../../actions";
 
-export default async function ServerStatus({ searchParams }: { searchParams: Promise<{ ok?: string; error?: string }> }) {
+export default async function ServerStatus({ searchParams }: { searchParams: Promise<{ ok?: string; error?: string; range?: string }> }) {
   await requireRole("admin");
   const sp = await searchParams;
-  const [st, dns, agent] = await Promise.all([getServerStatus(), checkServerDns(), getAgentStatus()]);
+  const range = parseRange(sp.range);
+  const [st, dns, agent, series] = await Promise.all([getServerStatus(), checkServerDns(), getAgentStatus(), getMetricSeries(range)]);
   const usedPct = st.disk ? Math.round(((st.disk.total - st.disk.free) / st.disk.total) * 100) : 0;
   return (
     <>
@@ -42,6 +45,24 @@ export default async function ServerStatus({ searchParams }: { searchParams: Pro
         {agent.configured && agent.up && (
           <p><Badge kind="ok">connected</Badge> <span className="muted">v{agent.version} · {agent.info.hostname} · {agent.info.platform} · up {Math.round(agent.info.uptimeSec / 3600)} h · disk {bytes(agent.info.diskFree)} free</span></p>
         )}
+      </div>
+      <div className="card">
+        <h2>Resource usage</h2>
+        <p className="actions">
+          {(Object.keys(RANGES) as RangeKey[]).map((r) => (
+            <a key={r} href={`?range=${r}`} className="btn" style={r === range ? { borderColor: "var(--brand)", color: "var(--brand)" } : undefined}>{r}</a>
+          ))}
+        </p>
+        {agent.configured ? (
+          <div className="graphs">
+            <Sparkline label="CPU" points={series.cpu} unit="%" />
+            <Sparkline label="Memory" points={series.mem} unit="%" />
+            <Sparkline label="Disk" points={series.disk} unit="%" />
+            <Sparkline label="Load (1m)" points={series.load} decimals={2} />
+            <Sparkline label="Network in" points={series.netRx} unit=" B/s" />
+            <Sparkline label="Network out" points={series.netTx} unit=" B/s" />
+          </div>
+        ) : <p className="muted">Needs the host agent (samples are collected once a minute).</p>}
       </div>
       <div className="card">
         <h2>Maintenance</h2>

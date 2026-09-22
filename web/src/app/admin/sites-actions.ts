@@ -8,6 +8,7 @@ import { run, s } from "@/lib/actions-util";
 import { audit } from "@/lib/audit";
 import { requireSession } from "@/lib/session";
 import { assertInScope, getOwnedSite } from "@/lib/tenancy";
+import { WAF_MODES } from "@/lib/security-core";
 import { agentCall } from "@/server/agent";
 import { addSiteDomain, applySite, createSite, deleteSite, envKeySchema, redirectSchema, removeSiteDomain, setSiteEnv, type Redirect } from "@/server/sites";
 
@@ -55,7 +56,8 @@ export async function updateSite(id: string, fd: FormData) {
   return mutate(id, "site.update", async (site) => {
     const cmd = s(fd, "startCommand");
     const startCommand = site.startCommand === null ? null : z.string().min(1, "Start command required").max(500).regex(/^[^\r\n\0]+$/, "Single line only").parse(cmd);
-    await prisma.site.update({ where: { id: site.id }, data: { forceHttps: fd.get("forceHttps") === "on", startCommand } });
+    const waf = z.enum(WAF_MODES).parse(s(fd, "waf") || "off");
+    await prisma.site.update({ where: { id: site.id }, data: { forceHttps: fd.get("forceHttps") === "on", startCommand, waf } });
     return "Settings saved and redeployed";
   });
 }

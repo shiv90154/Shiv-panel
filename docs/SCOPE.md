@@ -27,6 +27,8 @@
 ## Billing / API
 - [ ] Provisioning REST API (API keys), webhooks, WHMCS server module
 ## Security & ops
-- [ ] Firewall (nftables) + fail2ban, WAF option, ClamAV, resource graphs, self-update
+- [x] Firewall (nftables) + fail2ban, WAF option, ClamAV, resource graphs, self-update
 ## UI
 - [ ] cPanel-style user home (search + icon tiles + usage sidebar) and WHM-style admin/reseller shell; existing pages migrated
+## Marketing site
+- [x] Public static landing page for shivdomains.in (`marketing/public/`, no framework, no auth) - light theme only, honest feature copy, no fabricated stats/testimonials/pricing; served by Caddy via `marketing/caddy/*.caddy`

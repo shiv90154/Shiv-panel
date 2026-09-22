@@ -4,7 +4,7 @@ import { requireSession, readRecoveryFlash } from "@/lib/session";
 import { unseal } from "@/lib/crypto";
 import { otpauthUri } from "@/lib/totp";
 import { config } from "@/lib/config";
-import { cancelTotpSetup, changePassword, confirmTotpSetup, disableTotp, startTotpSetup } from "../../../actions/auth";
+import { cancelTotpSetup, changePassword, confirmTotpSetup, disableTotp, saveBranding, startTotpSetup } from "../../../actions/auth";
 
 // Shared by /admin/account and /cpanel/account: password + two-factor authentication.
 export default async function Account({ searchParams }: { searchParams: Promise<{ ok?: string; error?: string }> }) {
@@ -64,6 +64,19 @@ export default async function Account({ searchParams }: { searchParams: Promise<
               </form>
             )}
           </SectionCard>
+
+          {s.role === "reseller" && (
+            <SectionCard title="Branding" narrow>
+              <p className="muted">Shown instead of &quot;Hosting panel&quot; in your own dashboard and your customers&apos; dashboards.</p>
+              <form action={saveBranding} className="login">
+                <div><label>Brand name</label><input name="brandName" defaultValue={a.brandName ?? ""} maxLength={60} placeholder="Acme Hosting" /></div>
+                <div><label>Logo URL (https, shown at 20px tall)</label><input name="brandLogoUrl" defaultValue={a.brandLogoUrl ?? ""} placeholder="https://example.com/logo.png" /></div>
+                <div><label>Custom domain</label><input name="brandDomain" defaultValue={a.brandDomain ?? ""} placeholder="panel.acmehosting.com" /></div>
+                <button className="primary">Save branding</button>
+              </form>
+              <p className="muted">The custom domain is reserved for you but not served yet - it needs a DNS + TLS setup this panel does not automate (see docs/DECISIONS #24).</p>
+            </SectionCard>
+          )}
         </>
       )}
     </>

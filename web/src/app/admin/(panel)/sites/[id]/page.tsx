@@ -4,10 +4,15 @@ import { Flash, SectionCard, Badge } from "@/components/ui";
 import { ConfirmButton } from "@/components/client";
 import { requireSession } from "@/lib/session";
 import { getOwnedSite } from "@/lib/tenancy";
+import { prisma } from "@/lib/db";
+import { WAF_MODES, wafLabel } from "@/lib/security-core";
 import { RUNTIME_OPTIONS, readEnv } from "@/server/sites";
 import { agentCall } from "@/server/agent";
 import { addDomainToSite, redeploySite, removeDomainFromSite, removeSite, saveSiteEnv, saveSiteRedirects, setSiteRunning, updateSite } from "../../../sites-actions";
+import { scanSiteNowAction } from "../../../security-actions";
 import { statusBadge } from "../page";
+
+const scanBadge = (st: string) => <Badge kind={st === "clean" ? "ok" : st === "infected" ? "bad" : st === "error" ? "warn" : "off"}>{st}</Badge>;
 
 export const dynamic = "force-dynamic";
 
@@ -17,6 +22,7 @@ export default async function SiteDetail({ params, searchParams }: { params: Pro
   if (!found) notFound(); // out-of-scope ids look like missing ones (404, not 500)
   const site = found;
   const logs = await agentCall("site.logs", { siteId: site.id, lines: 200 }, site.accountId, 8000).then((r) => r.logs, (e: Error) => `(logs unavailable: ${e.message})`);
+  const scans = await prisma.scanRun.findMany({ where: { siteId: site.id }, orderBy: { startedAt: "desc" }, take: 10 });
   const rt = RUNTIME_OPTIONS.find((r) => r.id === site.runtime);
   const redirects = (Array.isArray(site.redirects) ? site.redirects : []) as { from: string; to: string; code: number }[];
   const primary = site.domains.find((d) => d.primary);
@@ -34,15 +40,19 @@ export default async function SiteDetail({ params, searchParams }: { params: Pro
           <form action={setSiteRunning.bind(null, site.id, false)}><button className="sm">Stop</button></form>
           <form action={redeploySite.bind(null, site.id)}><button className="sm">Redeploy</button></form>
         </div>
-        <p className="muted">Upload your files to <span className="mono">/srv/accounts/{site.accountId}/{site.id}</span> on the server (file manager and SFTP arrive in Phase 2).</p>
+        <p className="muted">Files live at <span className="mono">/srv/accounts/{site.accountId}/{site.id}</span> on the server - use the <Link href={`${s.base}/files?site=${site.id}`}>file manager</Link> to upload (SFTP/FTP not built yet).</p>
       </SectionCard>
 
       <SectionCard title="Settings">
         <form action={updateSite.bind(null, site.id)} className="row">
           {rt?.cmd && <div style={{ flex: "2 1 260px" }}><label>Start command (listen on $PORT)</label><input name="startCommand" defaultValue={site.startCommand ?? ""} required /></div>}
+          <div><label>Web application firewall</label>
+            <select name="waf" defaultValue={site.waf}>{WAF_MODES.map((m) => <option key={m} value={m}>{wafLabel[m]}</option>)}</select>
+          </div>
           <div className="auto"><label><input type="checkbox" name="forceHttps" defaultChecked={site.forceHttps} style={{ width: "auto" }} /> Force HTTPS</label></div>
           <div className="auto"><button className="primary">Save &amp; redeploy</button></div>
         </form>
+        {site.waf !== "off" && <p className="muted">Needs Caddy built with the Coraza module (<span className="mono">CADDY_IMAGE=mailhost-caddy-waf</span>, see <span className="mono">caddy/Dockerfile</span>) or the site will fail to deploy.</p>}
       </SectionCard>
 
       <SectionCard title="Domains &amp; subdomains">
@@ -76,6 +86,23 @@ export default async function SiteDetail({ params, searchParams }: { params: Pro
 
       <SectionCard title="Logs (last 200 lines)">
         <pre className="mono" style={{ maxHeight: 360, overflow: "auto", whiteSpace: "pre-wrap" }}>{logs || "(empty)"}</pre>
+      </SectionCard>
+
+      <SectionCard title="Malware scan" actions={<form action={scanSiteNowAction.bind(null, site.id)}><button className="sm" disabled={scans.some((r) => r.status === "running")}>Scan now</button></form>}>
+        <table><tbody>
+          {scans.map((r) => {
+            const findings = Array.isArray(r.findings) ? (r.findings as { path: string; signature: string }[]) : [];
+            return (
+              <tr key={r.id}>
+                <td className="muted">{r.startedAt.toLocaleString()}</td>
+                <td>{r.trigger}</td>
+                <td>{scanBadge(r.status)}</td>
+                <td>{r.status === "error" ? r.error : r.total ? `${r.total} finding(s)${findings.length ? ": " + findings.slice(0, 5).map((f) => `${f.path} (${f.signature})`).join(", ") : ""}${r.total > findings.length ? ", …" : ""}` : r.status === "running" ? "" : "clean"}</td>
+              </tr>
+            );
+          })}
+        </tbody></table>
+        {!scans.length && <p className="muted">No scans yet. ClamAV also runs a scan of every site once a night.</p>}
       </SectionCard>
 
       <SectionCard title="Delete site">

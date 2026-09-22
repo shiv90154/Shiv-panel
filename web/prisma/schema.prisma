@@ -26,6 +26,12 @@ model Account {
   totpLastStep  Int?      @map("totp_last_step") // last accepted 30s step (replay protection)
   recoveryCodes String[]  @map("recovery_codes") // sha256 hashes of unused one-time codes
   lastLoginAt   DateTime? @map("last_login_at")
+  // Reseller white-label (role=reseller only; ignored otherwise). brandDomain is stored/validated but NOT yet served:
+  // no request ever reaches this host today (see docs/DECISIONS #24) - it needs Caddy on-demand TLS + a host lookup
+  // that the current Edge middleware cannot do without adding real risk to the auth gate every request goes through.
+  brandName     String?   @map("brand_name")
+  brandLogoUrl  String?   @map("brand_logo_url")
+  brandDomain   String?   @unique @map("brand_domain")
   createdAt     DateTime  @default(now()) @map("created_at")
   updatedAt     DateTime  @updatedAt @map("updated_at")
   ownedPackages Package[] @relation("PackageOwner")
@@ -40,6 +46,7 @@ model Account {
   cronJobs      CronJob[]
   backupPolicy  BackupPolicy?
   backupRuns    BackupRun[]
+  scanRuns      ScanRun[]
 
   @@index([parentId])
   @@map("accounts")
@@ -92,6 +99,8 @@ model ApiKey {
   name       String
   prefix     String // first characters, for display
   keyHash    String    @unique @map("key_hash") // sha256 of the full key
+  scope      String    @default("full") // full | read (read = GET only, enforced in the API route)
+  expiresAt  DateTime? @map("expires_at")
   lastUsedAt DateTime? @map("last_used_at")
   revokedAt  DateTime? @map("revoked_at")
   createdAt  DateTime  @default(now()) @map("created_at")
@@ -137,12 +146,14 @@ model Site {
   forceHttps   Boolean      @default(true) @map("force_https")
   envSealed    String?      @map("env_sealed") // AES-GCM sealed JSON {KEY: value}
   redirects    Json         @default("[]") // [{from, to, code}]
+  waf          String       @default("off") // off | detect | block (Coraza; needs the WAF Caddy build)
   status       String       @default("creating") // creating | running | stopped | error
   lastError    String?      @map("last_error")
   createdAt    DateTime     @default(now()) @map("created_at")
   updatedAt    DateTime     @updatedAt @map("updated_at")
   domains      SiteDomain[]
   cronJobs     CronJob[]
+  scanRuns     ScanRun[]
 
   @@unique([accountId, name])
   @@map("sites")
@@ -330,7 +341,75 @@ model Webhook {
   lastStatus    String?   @map("last_status")
   failures      Int       @default(0)
   createdAt     DateTime  @default(now()) @map("created_at")
+  deliveries    WebhookDelivery[]
 
   @@index([accountId])
   @@map("webhooks")
+}
+
+// One row per delivery attempt (retry = a new row, same webhook+event, attempt+1). Kept as a log, last 20 per webhook.
+model WebhookDelivery {
+  id            String    @id @default(cuid())
+  webhookId     String    @map("webhook_id")
+  webhook       Webhook   @relation(fields: [webhookId], references: [id], onDelete: Cascade)
+  event         String
+  body          String
+  attempt       Int       @default(1)
+  status        String    @default("pending") // pending | sending | ok | error
+  httpStatus    Int?      @map("http_status")
+  error         String?
+  nextAttemptAt DateTime  @map("next_attempt_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  @@index([webhookId, createdAt])
+  @@index([status, nextAttemptAt])
+  @@map("webhook_deliveries")
+}
+
+// Panel-managed firewall rules (agent/firewall.mjs turns them into one nft table). kind port: open a host port (optionally only for cidr);
+// kind block: drop everything from cidr. The base platform ports and SSH are always open and are not stored.
+model FirewallRule {
+  id        String   @id @default(cuid())
+  kind      String // port | block
+  proto     String? // tcp | udp (port rules)
+  portFrom  Int?     @map("port_from")
+  portTo    Int?     @map("port_to")
+  cidr      String?
+  comment   String   @default("")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("firewall_rules")
+}
+
+// ClamAV scan of one site's files. findings = [{path, signature}] (max 200). The last 10 runs per site are kept.
+model ScanRun {
+  id         String    @id @default(cuid())
+  accountId  String    @map("account_id")
+  account    Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  siteId     String    @map("site_id")
+  site       Site      @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  trigger    String // manual | nightly
+  status     String    @default("running") // running | clean | infected | error
+  startedAt  DateTime  @default(now()) @map("started_at")
+  finishedAt DateTime? @map("finished_at")
+  findings   Json      @default("[]")
+  total      Int       @default(0)
+  error      String?
+
+  @@index([siteId, startedAt])
+  @@index([accountId])
+  @@map("scan_runs")
+}
+
+// One row a minute (server graphs). Rates are computed from counter deltas; null = not available on this host.
+model MetricSample {
+  ts       DateTime @id
+  cpuPct   Float?   @map("cpu_pct")
+  load1    Float?   @map("load1")
+  memPct   Float?   @map("mem_pct")
+  diskPct  Float?   @map("disk_pct")
+  netRxBps Float?   @map("net_rx_bps")
+  netTxBps Float?   @map("net_tx_bps")
+
+  @@map("metric_samples")
 }

@@ -27,3 +27,6 @@ https:// {
 
 # One generated file per hosted site (written by the host agent, see agent/sites.mjs).
 import /etc/caddy/sites/*.caddy
+
+# The company's own marketing site (marketing/caddy/*.caddy), served from marketing/public.
+import /etc/caddy/marketing/*.caddy

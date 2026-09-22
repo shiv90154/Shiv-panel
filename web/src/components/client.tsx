@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { Icon } from "./ui";
+import type { TileColor } from "./tile";
 
 export function ConfirmButton({ message, children, className = "danger sm" }: { message: string; children: React.ReactNode; className?: string }) {
   return (
@@ -37,8 +39,14 @@ export function TileSearch({ children }: { children: React.ReactNode }) {
   );
 }
 
-export function NavLink({ href, children, exact }: { href: string; children: React.ReactNode; exact?: boolean }) {
+export function NavLink({ href, children, exact, icon, color }: { href: string; children: React.ReactNode; exact?: boolean; icon?: string; color?: TileColor }) {
   const p = usePathname();
   const cur = exact ? p === href : p === href || p.startsWith(href + "/");
-  return <Link href={href} className={cur ? "cur" : undefined}>{children}</Link>;
+  const cls = [cur && "cur", color && `c-${color}`].filter(Boolean).join(" ") || undefined;
+  return (
+    <Link href={href} className={cls}>
+      {icon && <span className="nav-icon"><Icon name={icon} size={16} /></span>}
+      {children}
+    </Link>
+  );
 }

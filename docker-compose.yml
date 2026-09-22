@@ -105,6 +105,8 @@ services:
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ${CADDY_SITES_DIR:-/srv/caddy-sites}:/etc/caddy/sites:ro # per-site snippets written by the agent
+      - ./marketing/caddy:/etc/caddy/marketing:ro # the company's own marketing site
+      - ./marketing/public:/srv/marketing:ro
       - caddy_data:/data
       - caddy_config:/config
 

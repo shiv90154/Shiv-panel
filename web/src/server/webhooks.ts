@@ -15,8 +15,14 @@ async function assertPublicHost(url: string) {
 export const newWebhookSecret = () => "whsec_" + crypto.randomBytes(24).toString("base64url");
 export const sealSecret = seal;
 
-async function deliver(hook: { id: string; url: string; secret: string }, body: string) {
-  let status: string;
+// Retry backoff in seconds after attempt 1, 2, 3, 4 fail; attempt 5 is the last try. Kept short: billing systems should
+// reconcile via the API for anything older than a few hours, not wait on a webhook forever (see DECISIONS #22).
+const BACKOFF_SEC = [60, 300, 1800, 7200];
+const MAX_ATTEMPTS = BACKOFF_SEC.length + 1;
+const STALE_SENDING_MS = 2 * 60_000; // a "sending" row this old means the process died mid-delivery
+const KEEP_DELIVERIES = 20;
+
+async function attempt(hook: { url: string; secret: string }, event: string, body: string): Promise<{ ok: boolean; httpStatus: number | null; error: string | null }> {
   try {
     await assertPublicHost(hook.url);
     const secret = unseal(hook.secret);
@@ -27,12 +33,31 @@ async function deliver(hook: { id: string; url: string; secret: string }, body: 
       headers: { "content-type": "application/json", "user-agent": "ShivAppHub-Webhook/1", "x-webhook-timestamp": String(ts), "x-webhook-signature": signPayload(secret, ts, body) },
       body,
     });
-    status = res.ok ? `ok ${res.status}` : `http ${res.status}`;
+    return { ok: res.ok, httpStatus: res.status, error: res.ok ? null : `http ${res.status}` };
   } catch (e) {
-    status = "error: " + (e instanceof Error ? e.message : "failed").slice(0, 100);
+    return { ok: false, httpStatus: null, error: (e instanceof Error ? e.message : "failed").slice(0, 200) };
   }
-  const ok = status.startsWith("ok");
-  await prisma.webhook.update({ where: { id: hook.id }, data: { lastAt: new Date(), lastStatus: status, failures: ok ? 0 : { increment: 1 } } }).catch(() => {});
+}
+
+/** Claims one pending/due delivery row and runs it, scheduling a retry row on failure. Safe to call concurrently: only the caller that flips pending->sending proceeds. */
+async function runDelivery(id: string) {
+  const claimed = await prisma.webhookDelivery.updateMany({ where: { id, status: "pending" }, data: { status: "sending" } });
+  if (!claimed.count) return;
+  const del = await prisma.webhookDelivery.findUnique({ where: { id }, include: { webhook: true } });
+  if (!del) return;
+  const r = await attempt(del.webhook, del.event, del.body);
+  await prisma.webhookDelivery.update({ where: { id }, data: { status: r.ok ? "ok" : "error", httpStatus: r.httpStatus, error: r.error } });
+  await prisma.webhook.update({ where: { id: del.webhookId }, data: { lastAt: new Date(), lastStatus: r.ok ? `ok ${r.httpStatus}` : (r.error ?? "error"), failures: r.ok ? 0 : { increment: 1 } } }).catch(() => {});
+  if (!r.ok && del.attempt < MAX_ATTEMPTS) {
+    const delaySec = BACKOFF_SEC[del.attempt - 1];
+    await prisma.webhookDelivery.create({ data: { webhookId: del.webhookId, event: del.event, body: del.body, attempt: del.attempt + 1, status: "pending", nextAttemptAt: new Date(Date.now() + delaySec * 1000) } });
+  }
+  await pruneDeliveries(del.webhookId);
+}
+
+async function pruneDeliveries(webhookId: string) {
+  const old = await prisma.webhookDelivery.findMany({ where: { webhookId }, orderBy: { createdAt: "desc" }, skip: KEEP_DELIVERIES, select: { id: true } });
+  if (old.length) await prisma.webhookDelivery.deleteMany({ where: { id: { in: old.map((o) => o.id) } } });
 }
 
 /** Fire-and-forget: notifies the webhooks of every ancestor (reseller, admin) of `accountId`, plus the account's own if it is one. Never throws. */
@@ -45,6 +70,16 @@ export function emitAccountEvent(event: WebhookEvent, account: { id: string; use
     if (!owners.length) return;
     const hooks = await prisma.webhook.findMany({ where: { accountId: { in: owners }, active: true } });
     const body = JSON.stringify({ event, time: new Date().toISOString(), account: { id: account.id, username: account.username, email: account.email, role: account.role }, ...extra });
-    await Promise.all(hooks.map((h) => deliver(h, body)));
+    await Promise.all(hooks.map(async (h) => {
+      const del = await prisma.webhookDelivery.create({ data: { webhookId: h.id, event, body, attempt: 1, status: "pending", nextAttemptAt: new Date() } });
+      await runDelivery(del.id);
+    }));
   })().catch((e) => console.error("[webhook]", e));
+}
+
+/** Called once a minute by the job ticker: requeues stale "sending" rows (crashed mid-delivery) then runs whatever is due. */
+export async function processDueWebhookDeliveries() {
+  await prisma.webhookDelivery.updateMany({ where: { status: "sending", createdAt: { lt: new Date(Date.now() - STALE_SENDING_MS) } }, data: { status: "pending", nextAttemptAt: new Date() } });
+  const due = await prisma.webhookDelivery.findMany({ where: { status: "pending", nextAttemptAt: { lte: new Date() } }, select: { id: true }, take: 200 });
+  for (const d of due) await runDelivery(d.id);
 }

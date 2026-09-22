@@ -40,9 +40,11 @@ async function findManaged(sess: Session, name: string) {
 async function handle(req: NextRequest, path: string[]) {
   const ip = req.headers.get("x-forwarded-for")?.split(",")[0].trim() || "local";
   if (tooManyAttempts("api-auth:" + ip, 30, 60_000)) return fail(429, "too many failed requests");
-  const sess = await authenticateKey(req.headers.get("authorization"));
-  if (!sess) { recordAttempt("api-auth:" + ip); return fail(401, "invalid or missing API key"); }
+  const auth = await authenticateKey(req.headers.get("authorization"));
+  if (!auth) { recordAttempt("api-auth:" + ip); return fail(401, "invalid or missing API key"); }
+  const { session: sess, scope } = auth;
   const m = req.method;
+  if (scope === "read" && m !== "GET") return fail(403, "this key is read-only");
   const body = m === "POST" ? await req.json().catch(() => ({})) as Record<string, unknown> : {};
   const [res, name, action] = path;
 

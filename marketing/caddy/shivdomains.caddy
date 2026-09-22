@@ -1,0 +1,7 @@
+# Static marketing site (marketing/public), served on the company's own domain.
+# Edit or remove this file if the marketing domain changes; it's imported by the root Caddyfile.
+shivdomains.in, www.shivdomains.in {
+	encode gzip
+	root * /srv/marketing
+	file_server
+}

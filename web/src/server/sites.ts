@@ -44,7 +44,7 @@ export async function applySite(id: string) {
   const params: SiteApplyParams = {
     siteId: site.id, runtime: site.runtime, domains: site.domains.map((d) => d.name), env: readEnv(site),
     startCommand: site.startCommand ?? undefined, redirects: readRedirects(site.redirects) as SiteApplyParams["redirects"],
-    forceHttps: site.forceHttps, memoryMb: pkg?.ramMb ?? 0, cpuPercent: pkg?.cpuPercent ?? 0,
+    forceHttps: site.forceHttps, waf: site.waf as SiteApplyParams["waf"], memoryMb: pkg?.ramMb ?? 0, cpuPercent: pkg?.cpuPercent ?? 0,
   };
   try {
     await agentCall("site.apply", params, site.accountId, 15 * 60_000);

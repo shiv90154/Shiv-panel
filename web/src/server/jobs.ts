@@ -6,6 +6,9 @@ import { refreshUsage } from "./usage";
 import { verifyDomainDns } from "./domains";
 import { tickCron } from "./cron";
 import { tickBackups } from "./backups";
+import { collectMetricSample, nightlyScanDue, pruneMetricSamples, runNightlySiteScans } from "./security";
+import { agentConfigured } from "./agent";
+import { processDueWebhookDeliveries } from "./webhooks";
 
 const safe = (name: string, fn: () => Promise<unknown>) => async () => {
   try { await fn(); } catch (e) { console.error(`[jobs] ${name} failed:`, e); }
@@ -30,9 +33,14 @@ export async function startJobs() {
   setInterval(safe("usage", refreshUsage), 5 * 60_000);
   setTimeout(safe("usage", refreshUsage), 15_000);
   setInterval(safe("prune", () => pruneLogs(30)), 6 * 3600_000);
+  setInterval(safe("prune-metrics", pruneMetricSamples), 6 * 3600_000);
   // Cron + backup schedules: tick on the minute (UTC); each has its own guard so a slow cron tick never delays backups (or vice versa).
   const guarded = (name: string, fn: () => Promise<unknown>) => { let busy = false; return safe(name, async () => { if (busy) return; busy = true; try { await fn(); } finally { busy = false; } }); };
-  const ticks = [guarded("cron", () => tickCron()), guarded("backups", () => tickBackups())];
+  const ticks = [
+    guarded("cron", () => tickCron()), guarded("backups", () => tickBackups()), guarded("metrics", collectMetricSample),
+    guarded("nightly-scan", async () => { if (agentConfigured() && await nightlyScanDue()) await runNightlySiteScans(); }),
+    guarded("webhook-retry", processDueWebhookDeliveries),
+  ];
   setTimeout(() => { const go = () => ticks.forEach((t) => void t()); go(); setInterval(go, 60_000); }, 60_000 - (Date.now() % 60_000));
   setInterval(safe("dns", async () => {
     for (const d of await prisma.domain.findMany({ select: { id: true } })) await verifyDomainDns(d.id);

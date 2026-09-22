@@ -9,7 +9,7 @@ import { audit } from "@/lib/audit";
 import { seal, sha256, unseal } from "@/lib/crypto";
 import { hashAdminPassword, verifyAdminPassword } from "@/lib/password";
 import { clearAttempts, recordAttempt, tooManyAttempts } from "@/lib/ratelimit";
-import { clearPendingLogin, clientIp, createPendingLogin, createSession, destroySession, getSession, readPendingLogin, requireSession, setRecoveryFlash } from "@/lib/session";
+import { clearPendingLogin, clientIp, createPendingLogin, createSession, destroySession, getSession, readPendingLogin, requireRole, requireSession, setRecoveryFlash } from "@/lib/session";
 import { homeFor, type Role } from "@/lib/tenancy-core";
 import { generateSecret, verifyTotp } from "@/lib/totp";
 import { passwordSchema } from "@/server/domains";
@@ -107,6 +107,29 @@ export async function changePassword(fd: FormData) {
     await createSession(updated); // the old cookie is now invalid (password fingerprint changed)
     await audit(sess, "account.password_changed");
     return "Password changed";
+  });
+}
+
+// ---------- reseller white-label ----------
+const hostnameSchema = /^(?!-)[a-z0-9-]{1,63}(?:\.[a-z0-9-]{1,63})+$/;
+
+export async function saveBranding(fd: FormData) {
+  const sess = await requireRole("reseller");
+  return run(`${sess.base}/account`, async () => {
+    const name = s(fd, "brandName").slice(0, 60) || null;
+    const logoUrl = s(fd, "brandLogoUrl").slice(0, 300);
+    if (logoUrl && !/^https:\/\//.test(logoUrl)) throw new Error("Logo URL must start with https://");
+    const domainRaw = s(fd, "brandDomain").toLowerCase();
+    const domain = domainRaw ? domainRaw : null;
+    if (domain && !hostnameSchema.test(domain)) throw new Error("Enter a bare domain, e.g. panel.example.com");
+    try {
+      await prisma.account.update({ where: { id: sess.account.id }, data: { brandName: name, brandLogoUrl: logoUrl || null, brandDomain: domain } });
+    } catch (e) {
+      if (e && typeof e === "object" && "code" in e && e.code === "P2002") throw new Error("That domain is already in use by another account");
+      throw e;
+    }
+    await audit(sess, "account.branding_saved", { detail: { brandName: name, brandDomain: domain } });
+    return "Branding saved";
   });
 }
 

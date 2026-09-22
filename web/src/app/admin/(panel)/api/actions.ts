@@ -12,15 +12,20 @@ import { newWebhookSecret } from "@/server/webhooks";
 
 const PATH = "/admin/api";
 
+const EXPIRY_DAYS = { "": null, "30": 30, "90": 90, "365": 365 } as const;
+
 export async function createApiKey(fd: FormData) {
   const sess = await requireRole("admin", "reseller");
   return run(PATH, async () => {
     if (sess.impersonating) throw new Error("Not available while impersonating");
     const name = z.string().trim().min(1, "Name is required").max(60).parse(s(fd, "name"));
+    const scope = z.enum(["full", "read"]).parse(s(fd, "scope") || "full");
+    const days = z.enum(["", "30", "90", "365"]).parse(s(fd, "expires"));
+    const expiresAt = EXPIRY_DAYS[days] ? new Date(Date.now() + EXPIRY_DAYS[days]! * 86400_000) : null;
     if ((await prisma.apiKey.count({ where: { accountId: sess.account.id, revokedAt: null } })) >= 20) throw new Error("Too many active keys - revoke one first");
     const k = generateApiKey();
-    await prisma.apiKey.create({ data: { accountId: sess.account.id, name, prefix: k.prefix, keyHash: k.keyHash } });
-    await audit(sess, "apikey.create", { target: name });
+    await prisma.apiKey.create({ data: { accountId: sess.account.id, name, prefix: k.prefix, keyHash: k.keyHash, scope, expiresAt } });
+    await audit(sess, "apikey.create", { target: name, detail: { scope, expiresAt } });
     return "KEY:" + seal(k.key); // page shows the key once; never stored in clear
   });
 }

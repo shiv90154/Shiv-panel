@@ -1,4 +1,5 @@
 import http from "node:http";
+import type { RawMetrics } from "@/lib/security-core";
 
 // Typed client for the host agent (agent/agent.mjs). Add a method here AND in the agent's METHODS whitelist together.
 export type AgentMethods = {
@@ -37,7 +38,25 @@ export type AgentMethods = {
   "backup.restore": { params: { snapshotId: string; kind: "site" | "db" | "mail"; name: string }; result: Record<string, never> };
   "backup.deleteSnapshot": { params: { snapshotId: string }; result: Record<string, never> };
   "backup.purgeAccount": { params: Record<string, never>; result: Record<string, never> };
+  "firewall.apply": { params: FirewallParams; result: { openPorts: number; blocked: number } };
+  "firewall.disable": { params: Record<string, never>; result: Record<string, never> };
+  "firewall.status": { params: Record<string, never>; result: { installed: boolean; active: boolean; ruleset: string; sshPort: number } };
+  "fail2ban.status": { params: Record<string, never>; result: { installed: boolean; jails: Fail2banJail[] } };
+  "fail2ban.ban": { params: { jail: string; ip: string }; result: Record<string, never> };
+  "fail2ban.unban": { params: { jail: string; ip: string }; result: Record<string, never> };
+  "clamav.scan": { params: { siteId: string }; result: { infected: boolean; total: number; findings: ScanFinding[]; durationMs: number; warnings: string } };
+  "clamav.status": { params: Record<string, never>; result: { installed: false } | { installed: true; version: string; dbVersion: number | null; dbDate: string | null } };
+  "system.metrics": { params: Record<string, never>; result: RawMetrics };
+  "update.check": { params: Record<string, never>; result: UpdateCheck };
+  "update.status": { params: Record<string, never>; result: UpdateStatus };
+  "update.apply": { params: { expect: string }; result: { started: boolean; via: string } };
 };
+
+export type FirewallParams = { openPorts: { proto: "tcp" | "udp"; from: number; to: number; source: string | null }[]; blocked: string[] };
+export type Fail2banJail = { name: string; currentlyFailed: number; totalFailed: number; currentlyBanned: number; totalBanned: number; banned: string[] };
+export type ScanFinding = { path: string; signature: string };
+export type UpdateCheck = { branch: string; currentBranch: string; current: string; latest: string; behind: number; ahead: number; dirty: boolean; commits: { sha: string; subject: string }[]; busy: boolean };
+export type UpdateStatus = { state: "idle" | "running" | "ok" | "failed"; step?: string; from?: string; to?: string; startedAt?: string; finishedAt?: string; error?: string | null; log?: string };
 
 export type BackupRunParams = { sites: string[]; databases: { engine: DbEngine; name: string }[]; mailDomains: string[]; keep: { daily: number; weekly: number; monthly: number } };
 export type BackupItemResult = { kind: "site" | "db" | "mail" | "retention"; name: string; ok: boolean; error?: string };
@@ -54,7 +73,7 @@ export type FileEntry = { name: string; type: "file" | "dir" | "link"; size: num
 
 export type SiteApplyParams = {
   siteId: string; runtime: string; domains: string[]; env: Record<string, string>; startCommand?: string;
-  redirects: { from: string; to: string; code: 301 | 302 }[]; forceHttps: boolean; memoryMb: number; cpuPercent: number;
+  redirects: { from: string; to: string; code: 301 | 302 }[]; forceHttps: boolean; waf: "off" | "detect" | "block"; memoryMb: number; cpuPercent: number;
 };
 
 export class AgentError extends Error {}
